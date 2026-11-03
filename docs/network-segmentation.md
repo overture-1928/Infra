@@ -98,14 +98,14 @@ VLAN 10 태그를 제거한 프레임을 Kolla의 `br-ex`에 전달하기 때문
 
 ## 3노드 이상 목표 구성
 
-두 번째 NIC를 추가할 수 있다면 다음 구성을 기본 목표로 한다.
+3노드와 Ceph 전환 시 세 호스트에 별도 10Gbps NIC를 추가하고 다음 구성을 기본 목표로 한다.
 
 | 구분 | VLAN·서브넷 예시 | 노드 주소 | Gateway | 물리 경로 |
 | --- | --- | --- | --- | --- |
 | 관리·API | native, `192.0.2.0/24` | `.2`, `.4`, `.5`; VIP `.10` | `.1` | NIC 1 |
 | Provider 외부망 | VLAN 10, `198.51.100.0/24` | 호스트 IP 없음 | `.1` | NIC 1 trunk |
 | OVN tunnel | VLAN 20, `192.168.20.0/24` | `.2`, `.4`, `.5` | 없음 | NIC 1 trunk |
-| Ceph public/client | VLAN 30, `192.168.30.0/24` | `.2`, `.4`, `.5` | 없음 | NIC 2 또는 storage bond |
+| Ceph public/client | VLAN 30, `192.168.30.0/24` | `.2`, `.4`, `.5` | 없음 | 전용 10Gbps NIC 2 또는 storage bond |
 | Ceph cluster | VLAN 31, `192.168.31.0/24` | `.2`, `.4`, `.5` | 없음 | 별도 고속 경로가 있을 때만 |
 | Tenant overlay | `203.0.113.0/24` | VM 주소 | Neutron router | 물리 VLAN 없음 |
 
@@ -256,14 +256,14 @@ flowchart TB
     clusternet <-.-> osdb
 ```
 
-NIC가 한 개뿐이면 VLAN 10·20·30을 같은 trunk에 실을 수 있다. L2와 접근 정책은 분리되지만
-대역폭, NIC 장애와 스위치 포트 장애는 공유한다. NVMe Ceph 복구 트래픽과 VM 트래픽이 같은
-1GbE 링크를 쓰면 성능이 크게 떨어질 수 있으므로 세 노드 전환 시 두 번째 NIC를 Ceph
-public/client망에 우선 배정한다.
+단일 노드 단계에서는 Ceph가 꺼져 있으므로 기존 관리 NIC만 사용한다. 3노드 전환 전에
+`cloud01`~`cloud03` 모두에 전용 10Gbps 경로를 준비하고 Ceph public/client망을 그 경로에
+배정한다. 관리·Provider·OVN 트래픽과 Ceph 복제·복구 트래픽이 같은 NIC를 공유하는 구성을
+최종 3노드 토폴로지로 사용하지 않는다.
 
-Ceph `cluster_network`는 필수가 아니다. 같은 단일 NIC에 VLAN 31만 추가해도 대역폭이나 장애
-경로가 달라지지 않는다. 우선 VLAN 30의 public network 하나를 사용하고, 별도 10/25GbE NIC나
-redundant storage bond가 준비되고 복구 트래픽 병목이 확인됐을 때만 cluster network를 추가한다.
+Ceph `cluster_network`는 필수가 아니다. 우선 전용 10Gbps NIC의 VLAN 30 public network
+하나로 client I/O와 복제·복구를 함께 처리한다. 두 번째 고속 경로나 redundant storage bond가
+추가되고 복구 트래픽 병목이 확인됐을 때만 VLAN 31 cluster network를 분리한다.
 
 OpenStack API와 Skyline(`http://192.0.2.10:9999`)은 관리망에서만 접근하고 인터넷에 직접 공개하지 않는다. 외부에서
 관리할 때는 VPN 또는 bastion을 사용한다. 공개 API가 실제로 필요할 때만 Provider/Floating IP

@@ -49,9 +49,9 @@ flowchart TB
 
   subgraph ROOT["설치된 cloud01 · root 명령"]
     STORPLAN["스토리지 dry-run<br/>실제 SSD·NVMe 경로와 시리얼 대조"]
-    STORGATE{"승인 게이트 4 · 초기화<br/>WIPE-OPENSTACK-STORAGE:<br/>data-serial:fast-serial"}
+    STORGATE{"승인 게이트 4 · 초기화 범위<br/>WIPE-OPENSTACK-DATA:<br/>data-serial:KEEP-CEPH:ceph-serial"}
     STORAPPLY["스토리지 apply<br/>Docker ext4 + Cinder LVM VG 생성"]
-    REBOOT2["재부팅 C<br/>Docker mount와 두 VG 확정"]
+    REBOOT2["재부팅 C<br/>Docker mount와 cinder-ssd VG 확정"]
     KOLLA["Kolla bootstrap → prechecks/pull → deploy<br/>Skyline·핵심 OpenStack 배포"]
     CLOUDINIT["cloud-init<br/>Ubuntu 24.04 Glance image 등록"]
     CLOUDVERIFY["verify-openstack<br/>API·compute·network·Cinder·Skyline 검사"]
@@ -153,7 +153,7 @@ flowchart TB
       CONTROL["MariaDB · RabbitMQ · Memcached"]
       OVN["OVN central + ovn-controller"]
       COMPUTE["Nova compute + libvirt/KVM"]
-      VOLUME["Cinder volume + iSCSI<br/>standard · fast"]
+      VOLUME["Cinder volume + iSCSI<br/>standard"]
       LOGS["Fluentd 로그 수집"]
     end
 
@@ -175,12 +175,12 @@ flowchart TB
       DOCKER["256GiB ext4 /var/lib/docker<br/>Kolla 영속 데이터 + Glance file store"]
       STANDARD["cinder-ssd VG<br/>standard volume type"]
       NVME["2TB NVMe"]
-      FAST["cinder-nvme VG<br/>fast volume type"]
+      CEPHRESERVE["초기화하지 않음<br/>3노드 Ceph OSD 예약"]
       ROOTVOL["k8s-01 120GiB boot volume"]
 
       DATA --> DOCKER
-      DATA --> STANDARD --> VOLUME
-      NVME --> FAST --> VOLUME --> ROOTVOL --> VM
+      DATA --> STANDARD --> VOLUME --> ROOTVOL --> VM
+      NVME --> CEPHRESERVE
     end
 
     MGMT --> EDGE
@@ -294,7 +294,7 @@ ORC·CAPI·CAPO 설치, Magnum용 장기 ServiceAccount kubeconfig 생성, Kolla
 사용자의 restricted OpenStack application credential을 한 번 생성한다. 첫 실행은 정확한
 `MANAGEMENT_CLOUD_CONFIRM` 값만 출력하고, 그 값을 검토해 다시 실행해야 사용자와 credential을
 만든다.
-기존 `k8s-01`의 `fast` boot volume은 유지하고 새 `k8s-02`, `k8s-03`만 Ceph volume으로
+기존 `k8s-01`의 `standard` boot volume은 유지하고 새 `k8s-02`, `k8s-03`만 Ceph volume으로
 만든다. Magnum 플래그가 켜진 상태에서 `deploy-kubernetes`를 실행하면 Kubespray 입력에
 external OpenStack CCM, Cinder CSI의 기본 `ceph` StorageClass와 Octavia OVN LoadBalancer
 설정이 자동으로 추가된다. 상세 절차는
@@ -319,14 +319,14 @@ k0smotron v2.3.0 scaffold만 `.cache/platform/`에 만들며 클러스터에 적
 | --- | --- | --- |
 | `EXAMPLE-OS-SSD-0001` | Ubuntu Server OS 128GB SSD | EFI 1GiB, `/boot` 2GiB, root 64GiB, `/var/log` 20GiB, swap 8GiB, 나머지 VG 여유 공간 |
 | `EXAMPLE-DATA-SSD-0001` | OpenStack 데이터 1TB SSD | `/var/lib/docker` 256GiB, 나머지 `cinder-ssd` (`standard`) |
-| `EXAMPLE-FAST-NVME-0001` | VM 볼륨 2TB NVMe | `cinder-nvme` (`fast`) |
+| `EXAMPLE-CEPH-NVME-0001` | 미래 Ceph OSD 2TB NVMe | 단일 노드 단계에는 파티션·파일시스템·LVM을 만들지 않고 보존 |
 | `EXAMPLE-RESERVED-SSD-0001` | 보류 512GB SSD | 초기화·마운트하지 않음 |
 | `EXAMPLE-RESERVED-HDD-0001` | 보류 4TB HDD | 초기화·마운트하지 않음 |
 | `EXAMPLE-RESERVED-HDD-0002` | 보류 3TB HDD | 초기화·마운트하지 않음 |
 
 128GB 제조사 표기 디스크는 Linux에서 약 119GiB로 보이며 약 24GiB를 `ubuntu-vg`의 여유
-공간으로 남긴다. 1TB SSD의 `standard` 영역은 약 675GiB, 2TB NVMe의 `fast` 영역은 포맷 전
-약 1.82TiB다.
+공간으로 남긴다. 1TB SSD의 `standard` 영역은 약 675GiB다. 2TB NVMe는 포맷 전 약
+1.82TiB이며 `cloud02`, `cloud03`의 같은 class OSD가 준비될 때까지 비워 둔다.
 
 표의 값은 공개 예시다. 실제 시리얼은 `inventory/openstack-plan.local.yml`에 기록하며
 `cloud01` 전용이다. 새 물리 노드에서
@@ -340,6 +340,7 @@ k0smotron v2.3.0 scaffold만 `.cache/platform/`에 만들며 클러스터에 적
 | 관리망 | `192.0.2.0/24` | Ubuntu, SSH, OpenStack API |
 | OpenStack API VIP | `192.0.2.10` | Kolla 내부·외부 API와 Skyline (`:9999`) |
 | provider VLAN 10 | `198.51.100.0/24` | router `.2`, Floating IP `.50-.99`와 외부 연결 |
+| Ceph 10Gbps망 | `192.168.30.0/24` | 3노드 전환 뒤 MON·OSD·RBD client 전용, gateway 없음 |
 | Kubernetes tenant 망 | `203.0.113.0/24` | Kubernetes VM 사설 주소 |
 | Kubernetes API VIP | `203.0.113.10` | kube-vip 내부 주소 |
 
@@ -348,7 +349,7 @@ k0smotron v2.3.0 scaffold만 `.cache/platform/`에 만들며 클러스터에 적
 `cloud01=192.0.2.2`, `cloud02=192.0.2.4`, `cloud03=192.0.2.5`를 예약한다.
 
 현재 한 노드에서는 관리·API·OVN tunnel이 `mgmt0`을 공유한다. 세 노드와 Ceph로 전환할 때는
-별도 NIC의 Ceph public망을 우선 추가하고, 필요하면 OVN tunnel VLAN을 분리한다. VLAN별
+세 호스트의 별도 10Gbps NIC에 Ceph public망을 구성하고, 필요하면 OVN tunnel VLAN을 분리한다. VLAN별
 스위치·라우터·ACL, NIC 수에 따른 단계안과 MTU 원칙은
 [망분리 설계](docs/network-segmentation.md)에 정리했다.
 OpenWrt를 라우터로 사용하는 현재 구성의 discovery, guarded apply와 rollback 절차는

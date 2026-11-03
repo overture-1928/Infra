@@ -4,6 +4,12 @@
 Kolla-Ansible이 사용할 최소 권한 설정을 내보낸다. 기본 동작은 검증과 dry-run이다. 디스크의
 기존 서명을 지우는 명령, OSD 제거 명령, LVM·Glance·Nova 데이터 이전 명령은 제공하지 않는다.
 
+계획된 첫 Ceph 토폴로지는 `cloud01`에서 단일 노드 기간 내내 비워 둔 2TB NVMe와
+`cloud02`, `cloud03`의 2TB NVMe를 OSD 한 개씩 사용한다. 세 호스트의 Ceph public/client
+주소는 전용 10Gbps 망 `192.168.30.0/24`에 두며, 관리·Provider·OVN 트래픽과 물리 경로를
+공유하지 않는다. 실제 NIC 이름, MAC과 주소는 Git에서 제외되는 로컬 Netplan 및 Ceph
+토폴로지에 기록하고 세 호스트에서 연결을 검증한 뒤 bootstrap한다.
+
 Ceph OSD를 적용하면 선택한 빈 디스크가 BlueStore 장치로 사용된다. 해당 디스크는 이후 일반
 파일시스템이나 로컬 Cinder VG로 사용할 수 없다. 세 복제본을 사용하는 이 구성의 가용 용량은
 대략 원시 용량의 3분의 1이며, 한 노드 장애 중 세 번째 복제본을 다시 만들 공간도 남겨야 한다.

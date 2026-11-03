@@ -235,7 +235,7 @@ cluster:
 배포 지원이 없으므로 provider는 계속 `kubernetes`를 사용한다.
 
 토폴로지를 렌더링하고 Terraform 변수에 management control plane 세 대를 선언한다. 기존
-`k8s-01`의 `fast` 부팅 볼륨 유형은 그대로 유지한다. 이를 `ceph`로 바꾸면 Terraform이 볼륨
+`k8s-01`의 `standard` 부팅 볼륨 유형은 그대로 유지한다. 이를 `ceph`로 바꾸면 Terraform이 볼륨
 교체를 계획하고 `prevent_destroy`가 적용을 막는다. 새 `k8s-02`, `k8s-03`만 `ceph`로 만들며,
 기존 부팅 볼륨의 이전은 별도 유지보수 작업으로 처리한다.
 

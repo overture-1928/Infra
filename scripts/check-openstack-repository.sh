@@ -174,9 +174,11 @@ assert untouched == expected, "protected disk serial set changed"
 public_serials = {
     plan["storage"]["os"]["serial"],
     plan["storage"]["openstack_data"]["serial"],
-    plan["storage"]["fast_volumes"]["serial"],
+    plan["storage"]["ceph_reserve"]["serial"],
     *untouched,
 }
+assert plan["storage"]["ceph_reserve"]["device_class"] == "nvme"
+assert plan["storage"]["ceph_reserve"]["min_size_bytes"] >= 1_800_000_000_000
 assert all(str(serial).startswith("EXAMPLE-") for serial in public_serials), (
     "the tracked OpenStack plan must contain only public example disk serials"
 )
@@ -187,6 +189,10 @@ first_octet = int(str(cloud01["management_mac"]).split(":", 1)[0], 16)
 assert first_octet & 0x02, "the tracked inventory MAC must be locally administered"
 assert ipaddress.ip_address(cluster_example["cluster"]["api_vip"]) in ipaddress.ip_network("192.0.2.0/24")
 assert ipaddress.ip_interface(cloud01["management_address"]).network == ipaddress.ip_network("192.0.2.0/24")
+ceph_network = ipaddress.ip_network(cluster_example["cluster"]["ceph"]["public_network"])
+assert ceph_network == ipaddress.ip_network("192.168.30.0/24")
+for node in cluster_example["nodes"].values():
+    assert ipaddress.ip_address(node["ceph_address"]) in ceph_network
 assert ipaddress.ip_network(plan["openstack"]["external_cidr"]) == ipaddress.ip_network("198.51.100.0/24")
 assert ipaddress.ip_network(plan["openstack"]["tenant_cidr"]) == ipaddress.ip_network("203.0.113.0/24")
 
@@ -275,7 +281,7 @@ import yaml
 plan = yaml.safe_load(Path(sys.argv[1]).read_text())
 plan["storage"]["os"]["serial"] = "CHECK-OS"
 plan["storage"]["openstack_data"]["serial"] = "CHECK-DATA"
-plan["storage"]["fast_volumes"]["serial"] = "CHECK-FAST"
+plan["storage"]["ceph_reserve"]["serial"] = "CHECK-CEPH"
 plan["storage"]["untouched"] = [{"serial": "CHECK-PROTECTED"}]
 Path(sys.argv[2]).write_text(yaml.safe_dump(plan, sort_keys=False))
 PY
@@ -287,7 +293,7 @@ case "$*" in
     cat <<'OUT'
 /dev/sda CHECK-OS disk
 /dev/sdb CHECK-DATA disk
-/dev/nvme0n1 CHECK-FAST disk
+/dev/nvme0n1 CHECK-CEPH disk
 /dev/sdc CHECK-PROTECTED disk
 OUT
     ;;
@@ -311,8 +317,9 @@ chmod +x "$work_dir/storage-bin/lsblk" "$work_dir/storage-bin/findmnt" "$work_di
 PATH="$work_dir/storage-bin:$PATH" \
 OPENSTACK_PLAN_CONFIG="$work_dir/storage-plan.yml" \
   ./scripts/prepare-openstack-storage.sh >"$work_dir/storage-dry-run.out"
-grep -q "OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-STORAGE:CHECK-DATA:CHECK-FAST'" \
+grep -q "OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-DATA:CHECK-DATA:KEEP-CEPH:CHECK-CEPH'" \
   "$work_dir/storage-dry-run.out"
+grep -q 'Future Ceph OSD, unchanged:' "$work_dir/storage-dry-run.out"
 
 if OPENSTACK_CLUSTER_CONFIG="$repo_dir/inventory/openstack-cluster.yml" \
   UBUNTU_OPERATOR_PASSWORD_HASH='$6$placeholder$hash' \
@@ -353,6 +360,21 @@ globals_data = yaml.safe_load(Path("kolla/globals.yml").read_text())
 assert str(globals_data["openstack_release"]) == series
 assert globals_data["enable_horizon"] == "no"
 assert globals_data["enable_skyline"] == "yes"
+assert globals_data["cinder_backend_lvm_name"] == "standard"
+assert globals_data["cinder_volume_group"] == "cinder-ssd"
+assert globals_data["cinder_backends"] == [{"name": "standard", "enabled": True}]
+terraform_main = Path("terraform/openstack/main.tf").read_text()
+terraform_variables = Path("terraform/openstack/variables.tf").read_text()
+assert 'openstack_blockstorage_volume_type_v3" "fast' not in terraform_main
+assert 'volume_type     = "standard"' in terraform_variables
+storage_prepare = Path("scripts/prepare-openstack-storage.sh").read_text()
+assert 'sgdisk --zap-all "$data_disk"' in storage_prepare
+for forbidden in (
+    'sgdisk --zap-all "$ceph_disk"',
+    'pvcreate -ff -y "$ceph_disk"',
+    'vgcreate "$data_vg" "$ceph_disk"',
+):
+    assert forbidden not in storage_prepare, f"reserved Ceph disk mutation returned: {forbidden}"
 versions = Path("terraform/openstack/versions.tf").read_text()
 match = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', versions)
 assert match and match.group(1) == provider

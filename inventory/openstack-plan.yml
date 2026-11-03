@@ -44,10 +44,11 @@ storage:
     docker_partition: 256GiB
     cinder_volume_group: cinder-ssd
     cinder_type: standard
-  fast_volumes:
-    serial: EXAMPLE-FAST-NVME-0001
-    cinder_volume_group: cinder-nvme
-    cinder_type: fast
+  ceph_reserve:
+    serial: EXAMPLE-CEPH-NVME-0001
+    min_size_bytes: 1800000000000
+    device_class: nvme
+    description: 2TB NVMe reserved as the cloud01 Ceph OSD; never initialize during the one-node LVM phase
   untouched:
     - serial: EXAMPLE-RESERVED-SSD-0001
       description: 512GB SSD reserved for later use

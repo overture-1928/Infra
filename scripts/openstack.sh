@@ -154,7 +154,6 @@ require_local_storage() {
   [[ $(storage_backend) != lvm ]] || {
     findmnt -n /var/lib/docker >/dev/null || fail '/var/lib/docker is not a separate mounted filesystem.'
     vgs cinder-ssd >/dev/null 2>&1 || fail 'VG cinder-ssd is missing.'
-    vgs cinder-nvme >/dev/null 2>&1 || fail 'VG cinder-nvme is missing.'
   }
 }
 

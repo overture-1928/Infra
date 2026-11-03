@@ -122,8 +122,8 @@ OVS에서 OVN으로 변환하지 않으며, 새 network·compute 노드에도 �
 로컬 파일에서 운영 대역으로 바꾼다.
 
 Ceph 전환 전에는 [망분리 설계](network-segmentation.md)에 따라 OSD를 둘 최소 세 호스트에
-같은 Ceph public/client망을 준비한다. 두 번째 NIC가 있다면 이 망에 우선 배정하고, 같은 단일 NIC에서
-VLAN만 나눈 경우에는 Ceph `cluster_network`를 비워 둔다. 별도 OVN tunnel망과 Ceph망은
+전용 10Gbps Ceph public/client망을 준비한다. 우선 이 망 하나로 client I/O와 복제·복구를
+처리하므로 Ceph `cluster_network`를 비워 둔다. 별도 OVN tunnel망과 Ceph망은
 Netplan·Kolla·Ceph 설정을 함께 바꾸기 전까지 활성화된 것으로 간주하지 않는다.
 
 cloud01용 자동 설치 seed와 `prepare-openstack-storage.sh`에는 cloud01의 고정 MAC과 디스크
@@ -499,7 +499,7 @@ Magnum·Octavia·management cluster 영향을 함께 검토하는 별도 작업�
 편입하고 검증하는 것을 권장한다.
 
 먼저 Terraform 변수에서 `k8s-01`~`k8s-03`을 control plane·etcd·worker로 선언한다. 기존
-`k8s-01`의 `volume_type = "fast"`는 유지하고 새 `k8s-02`, `k8s-03`만
+`k8s-01`의 `volume_type = "standard"`는 유지하고 새 `k8s-02`, `k8s-03`만
 `volume_type = "ceph"`로 지정한다. 실행 순서는 다음과 같다.
 
 ```bash

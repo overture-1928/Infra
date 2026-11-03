@@ -45,9 +45,9 @@ flowchart TB
   end
 
   subgraph ROOT["설치된 cloud01 · sudo/root로 실행"]
-    X1["6. 스토리지 dry-run<br/>OS/data/fast 시리얼과 실제 경로 대조"]
-    G3{"초기화 게이트 · data SSD + NVMe<br/>WIPE-OPENSTACK-STORAGE:<br/>data-serial:fast-serial 정확히 일치?"}
-    X2["스토리지 --apply<br/>data SSD: Docker ext4 + cinder-ssd VG<br/>NVMe: cinder-nvme VG"]
+    X1["6. 스토리지 dry-run<br/>OS/data/Ceph 예약 시리얼과 실제 경로 대조"]
+    G3{"초기화 게이트 · data SSD만<br/>WIPE-OPENSTACK-DATA:<br/>data-serial:KEEP-CEPH:ceph-serial 정확히 일치?"}
+    X2["스토리지 --apply<br/>data SSD: Docker ext4 + cinder-ssd VG<br/>2TB NVMe: Ceph용으로 보존"]
     R2["재부팅 3<br/>/var/lib/docker mount·LVM 확정"]
     X4["7. deploy-openstack<br/>bootstrap → facts → precheck/pull<br/>deploy/post-deploy → config/check"]
     X5["cloud-init<br/>Ubuntu 24.04 image를 Glance에 등록"]
@@ -79,7 +79,7 @@ sudo ./scripts/inspect-openstack-storage.sh
 
 - Ubuntu OS: `EXAMPLE-OS-SSD-0001`
 - OpenStack 운영 데이터와 일반 볼륨: `EXAMPLE-DATA-SSD-0001`
-- 고속 Cinder 볼륨: `EXAMPLE-FAST-NVME-0001`
+- 미래 Ceph OSD 예약: `EXAMPLE-CEPH-NVME-0001`
 
 512GB SSD와 3TB·4TB HDD는 설치 프로그램과 스토리지 스크립트에서 사용하지 않는다.
 위 시리얼은 공개 저장소용 예시다. 점검 결과와 장비 라벨을 대조한 다음 실제 입력 파일을
@@ -354,26 +354,27 @@ sudo ./scripts/prepare-openstack-storage.sh
 출력과 물리 라벨이 일치할 때만 정확한 확인 문자열로 적용한다.
 
 ```bash
-export OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-STORAGE:<출력된 데이터 SSD 시리얼>:<출력된 고속 NVMe 시리얼>'
+export OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-DATA:<출력된 데이터 SSD 시리얼>:KEEP-CEPH:<출력된 Ceph NVMe 시리얼>'
 sudo --preserve-env=OPENSTACK_STORAGE_CONFIRM ./scripts/prepare-openstack-storage.sh --apply
 sudo reboot
 ```
 
-이 단계는 1TB SSD와 2TB NVMe의 기존 파티션을 지운다. 스크립트가 dry-run에서 출력한 실제
-확인 문자열을 그대로 사용한다. 스크립트는 로컬 plan의 cloud01 시리얼만 허용하며 새 물리
+이 단계는 1TB SSD만 초기화한다. 2TB NVMe의 시리얼과 최소 크기를 확인하지만 파티션,
+파일시스템, PV와 VG를 만들지 않는다. 스크립트가 dry-run에서 출력한 실제 확인 문자열을
+그대로 사용한다. 스크립트는 로컬 plan의 cloud01 시리얼만 허용하며 새 물리
 노드의 스토리지 준비에는 사용할 수 없다.
 
 재부팅 후 호스트 사전 검사를 실행한다.
 
 ```bash
 findmnt /var/lib/docker
-sudo vgs cinder-ssd cinder-nvme
+sudo vgs cinder-ssd
 df -h / /var/log /var/lib/docker
 ./scripts/cluster.sh verify-hosts
 ```
 
 `verify-hosts`는 호스트명, NIC, 시간 동기화, 이름 해석, 별도 `/var/lib/docker` 마운트와
-cloud01의 두 Cinder VG를 검사한다.
+cloud01의 `cinder-ssd` VG를 검사한다.
 
 ## 7. 단일 노드 OpenStack 배포
 
@@ -441,7 +442,7 @@ export OS_CLIENT_CONFIG_FILE="$PWD/terraform/openstack/clouds.yaml"
 - 외부망 `198.51.100.0/24`와 tenant 망 `203.0.113.0/24`
 - tenant router의 고정 provider 주소 `198.51.100.2`
 - Neutron unbound port로 예약되고 일반 할당에서 제외된 Kubernetes 내부 API VIP `203.0.113.10`
-- `fast`, `standard` 볼륨 유형
+- `standard` 볼륨 유형
 - 최초 노드 `k8s-01` 한 대와 120GiB 부팅 볼륨
 - 보안 그룹과 Floating IP `198.51.100.50`
 
@@ -545,7 +546,7 @@ cluster:
 ```
 
 `terraform/openstack/terraform.tfvars`의 `kubernetes_nodes`를 `k8s-01`~`k8s-03` control
-plane·etcd·worker 세 대로 만든다. 이미 존재하는 `k8s-01`의 `volume_type = "fast"`는
+plane·etcd·worker 세 대로 만든다. 이미 존재하는 `k8s-01`의 `volume_type = "standard"`는
 유지하고 새 `k8s-02`, `k8s-03`만 `volume_type = "ceph"`로 설정한다. strict anti-affinity
 배치와 계획을 검토한 뒤 적용한다. `management_api_address`는 위 topology의
 `cluster.api_vip`와 같게 둔다. `kubernetes_api_host_number`는 tenant network 안의 내부

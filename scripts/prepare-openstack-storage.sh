@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Prepare only the reviewed SSD and NVMe. Dry-run unless --apply is supplied.
+# Prepare the reviewed data SSD while preserving the future Ceph NVMe.
+# Dry-run unless --apply is supplied.
 set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -40,14 +41,15 @@ try:
     storage = document["storage"]
     os_serial = str(storage["os"]["serial"])
     data = storage["openstack_data"]
-    fast = storage["fast_volumes"]
+    ceph = storage["ceph_reserve"]
     values = [
         os_serial,
         str(data["serial"]),
-        str(fast["serial"]),
+        str(ceph["serial"]),
         str(data["docker_partition"]),
         str(data["cinder_volume_group"]),
-        str(fast["cinder_volume_group"]),
+        str(ceph["min_size_bytes"]),
+        str(ceph["device_class"]),
     ]
     protected = [str(item["serial"]) for item in storage.get("untouched", [])]
 except (OSError, KeyError, TypeError) as exc:
@@ -58,29 +60,33 @@ for serial in values[:3] + protected:
         raise SystemExit(f"invalid disk serial in {path}: {serial!r}")
 if not re.fullmatch(r"[1-9][0-9]*GiB", values[3]):
     raise SystemExit("storage.openstack_data.docker_partition must look like 256GiB")
-for volume_group in values[4:6]:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.-]*", volume_group):
-        raise SystemExit(f"invalid Cinder volume group: {volume_group!r}")
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+_.-]*", values[4]):
+    raise SystemExit(f"invalid Cinder volume group: {values[4]!r}")
+if not re.fullmatch(r"[1-9][0-9]*", values[5]):
+    raise SystemExit("storage.ceph_reserve.min_size_bytes must be a positive integer")
+if values[6] not in {"hdd", "ssd", "nvme"}:
+    raise SystemExit("storage.ceph_reserve.device_class must be hdd, ssd or nvme")
 
 print(*values, *protected, sep="\n")
 PY
 ) || fail "Could not load storage settings from $plan_config"
 mapfile -t storage_values <<<"$storage_config"
-(( ${#storage_values[@]} >= 6 )) || fail "Storage settings are incomplete in $plan_config"
+(( ${#storage_values[@]} >= 7 )) || fail "Storage settings are incomplete in $plan_config"
 
 os_serial=${storage_values[0]}
 data_serial=${storage_values[1]}
-fast_serial=${storage_values[2]}
+ceph_serial=${storage_values[2]}
 docker_partition_size=${storage_values[3]}
 data_vg=${storage_values[4]}
-fast_vg=${storage_values[5]}
-protected_serials=("${storage_values[@]:6}")
+ceph_min_size=${storage_values[5]}
+ceph_device_class=${storage_values[6]}
+protected_serials=("${storage_values[@]:7}")
 
-for serial in "$os_serial" "$data_serial" "$fast_serial"; do
+for serial in "$os_serial" "$data_serial" "$ceph_serial"; do
   [[ $serial != EXAMPLE-* && $serial != *REPLACE* ]] || fail \
     "Replace public example serials in inventory/openstack-plan.local.yml before preparing storage."
 done
-confirmation="WIPE-OPENSTACK-STORAGE:${data_serial}:${fast_serial}"
+confirmation="WIPE-OPENSTACK-DATA:${data_serial}:KEEP-CEPH:${ceph_serial}"
 
 find_disk() {
   local wanted=$1 path serial type
@@ -100,26 +106,26 @@ partition_path() {
 }
 
 data_disk=$(find_disk "$data_serial") || fail "1TB SSD serial $data_serial was not found."
-fast_disk=$(find_disk "$fast_serial") || fail "2TB NVMe serial $fast_serial was not found."
+ceph_disk=$(find_disk "$ceph_serial") || fail "Reserved Ceph disk serial $ceph_serial was not found."
 os_disk=$(find_disk "$os_serial") || fail "OS SSD serial $os_serial was not found."
-[[ $data_disk != "$fast_disk" && $data_disk != "$os_disk" && $fast_disk != "$os_disk" ]] || \
+[[ $data_disk != "$ceph_disk" && $data_disk != "$os_disk" && $ceph_disk != "$os_disk" ]] || \
   fail 'Storage roles resolved to the same device.'
 
 data_size=$(lsblk -bdno SIZE "$data_disk")
-fast_size=$(lsblk -bdno SIZE "$fast_disk")
+ceph_size=$(lsblk -bdno SIZE "$ceph_disk")
 os_size=$(lsblk -bdno SIZE "$os_disk")
 (( os_size >= 120000000000 )) || fail 'OS SSD is smaller than the reviewed 128GB class device.'
 (( data_size >= 900000000000 )) || fail 'OpenStack data SSD is smaller than the reviewed 1TB class device.'
-(( fast_size >= 1800000000000 )) || fail 'Fast volume NVMe is smaller than the reviewed 2TB class device.'
+(( ceph_size >= ceph_min_size )) || fail 'Reserved Ceph disk is smaller than storage.ceph_reserve.min_size_bytes.'
 
 for serial in "${protected_serials[@]}"; do
   protected_disk=$(find_disk "$serial" || true)
-  [[ -z $protected_disk || ( $protected_disk != "$data_disk" && $protected_disk != "$fast_disk" ) ]] || \
+  [[ -z $protected_disk || ( $protected_disk != "$data_disk" && $protected_disk != "$ceph_disk" ) ]] || \
     fail "Protected disk $serial resolved to an initialization target."
 done
 
 root_source=$(findmnt -n -o SOURCE /)
-for disk in "$data_disk" "$fast_disk"; do
+for disk in "$data_disk" "$ceph_disk"; do
   if lsblk -sno PATH "$root_source" | grep -Fxq "$disk"; then
     fail "$disk contains the active root filesystem."
   fi
@@ -127,7 +133,6 @@ done
 
 data_part_docker=$(partition_path "$data_disk" 1)
 data_part_cinder=$(partition_path "$data_disk" 2)
-fast_part_cinder=$(partition_path "$fast_disk" 1)
 
 cat <<PLAN
 Storage plan:
@@ -136,18 +141,20 @@ Storage plan:
   OpenStack data SSD:              $data_disk ($data_serial)
     partition 1: $docker_partition_size ext4      -> /var/lib/docker
     partition 2: remaining space   -> LVM VG $data_vg
-  Fast volume NVMe:                $fast_disk ($fast_serial)
-    partition 1: entire device     -> LVM VG $fast_vg
+  Future Ceph OSD, unchanged:      $ceph_disk ($ceph_serial)
+    minimum size:                  $ceph_min_size bytes
+    device class:                  $ceph_device_class
+    one-node phase:                no partition, filesystem, PV or VG is created
   Explicitly protected serials:    ${protected_serials[*]}
 PLAN
 
 if [[ $(blkid -s LABEL -o value "$data_part_docker" 2>/dev/null || true) == openstack-docker ]] && \
-   vgs "$data_vg" >/dev/null 2>&1 && vgs "$fast_vg" >/dev/null 2>&1; then
+   vgs "$data_vg" >/dev/null 2>&1; then
   ssd_pv=$(pvs --noheadings -o pv_name --select "vg_name=$data_vg" | xargs)
-  nvme_pv=$(pvs --noheadings -o pv_name --select "vg_name=$fast_vg" | xargs)
-  [[ $ssd_pv == "$data_part_cinder" && $nvme_pv == "$fast_part_cinder" ]] || \
-    fail 'Existing Cinder VGs do not use the expected partitions.'
+  [[ $ssd_pv == "$data_part_cinder" ]] || \
+    fail 'The existing Cinder VG does not use the expected partition.'
   echo 'Expected storage layout already exists; no destructive action is needed.'
+  echo "Reserved Ceph disk remains unchanged: $ceph_disk ($ceph_serial)"
   exit 0
 fi
 
@@ -165,32 +172,26 @@ for command_name in sgdisk partprobe udevadm mkfs.ext4 pvcreate vgcreate blkid f
   command -v "$command_name" >/dev/null || fail "$command_name is required."
 done
 
-for disk in "$data_disk" "$fast_disk"; do
-  if lsblk -nrpo MOUNTPOINTS "$disk" | grep -qE '/.+'; then
-    fail "$disk or one of its partitions is mounted."
-  fi
-done
+if lsblk -nrpo MOUNTPOINTS "$data_disk" | grep -qE '/.+'; then
+  fail "$data_disk or one of its partitions is mounted."
+fi
+if lsblk -nrpo MOUNTPOINTS "$ceph_disk" | grep -qE '/.+'; then
+  fail "$ceph_disk is reserved for Ceph but it or one of its partitions is mounted."
+fi
 if [[ -d /var/lib/docker && -n $(find /var/lib/docker -mindepth 1 -maxdepth 1 -print -quit) ]]; then
   fail '/var/lib/docker is not empty; move or remove its existing contents before applying.'
 fi
-for vg in "$data_vg" "$fast_vg"; do
-  ! vgs "$vg" >/dev/null 2>&1 || fail "VG $vg already exists with an unverified layout."
-done
+! vgs "$data_vg" >/dev/null 2>&1 || fail "VG $data_vg already exists with an unverified layout."
 
 sgdisk --zap-all "$data_disk"
 sgdisk --new="1:1MiB:+$docker_partition_size" --typecode=1:8300 --change-name=1:openstack-docker "$data_disk"
 sgdisk --new=2:0:0 --typecode=2:8e00 --change-name="2:$data_vg" "$data_disk"
-sgdisk --zap-all "$fast_disk"
-sgdisk --new=1:1MiB:0 --typecode=1:8e00 --change-name="1:$fast_vg" "$fast_disk"
 partprobe "$data_disk"
-partprobe "$fast_disk"
 udevadm settle
 
 mkfs.ext4 -F -L openstack-docker "$data_part_docker"
 pvcreate -ff -y "$data_part_cinder"
 vgcreate "$data_vg" "$data_part_cinder"
-pvcreate -ff -y "$fast_part_cinder"
-vgcreate "$fast_vg" "$fast_part_cinder"
 
 mkdir -p /var/lib/docker
 docker_uuid=$(blkid -s UUID -o value "$data_part_docker")
@@ -198,4 +199,5 @@ fstab_line="UUID=$docker_uuid /var/lib/docker ext4 defaults,noatime 0 2"
 grep -qF "$fstab_line" /etc/fstab || printf '%s\n' "$fstab_line" >>/etc/fstab
 mount /var/lib/docker
 
-echo 'Storage prepared. Reboot once, then verify findmnt /var/lib/docker and both VGs.'
+echo 'Storage prepared. The future Ceph disk was not modified.'
+echo 'Reboot once, then verify findmnt /var/lib/docker and vgs cinder-ssd.'

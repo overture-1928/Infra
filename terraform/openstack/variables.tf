@@ -109,15 +109,15 @@ variable "kubernetes_nodes" {
       fixed_ip        = "203.0.113.11"
       floating_ip     = "198.51.100.50"
       volume_size     = 120
-      volume_type     = "fast"
+      volume_type     = "standard"
       roles           = ["control_plane", "etcd", "worker"]
       inventory_order = 10
     }
   }
 
   validation {
-    condition     = alltrue([for node in values(var.kubernetes_nodes) : contains(["fast", "standard", "ceph"], node.volume_type)])
-    error_message = "Every Kubernetes node volume_type must be fast, standard or ceph."
+    condition     = alltrue([for node in values(var.kubernetes_nodes) : contains(["standard", "ceph"], node.volume_type)])
+    error_message = "Every Kubernetes node volume_type must be standard or ceph."
   }
 
   validation {

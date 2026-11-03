@@ -24,7 +24,8 @@ cluster:
   ceph:
     enabled: false
     bootstrap_host: cloud01
-    public_network: 192.0.2.0/24
+    # Dedicated 10Gbps storage network used after cloud02 and cloud03 join.
+    public_network: 192.168.30.0/24
     cluster_network: ""
     osd_memory_target_ratio: 0.2
     # images/volumes/vms are pinned to one CRUSH device class. Other classes
@@ -54,7 +55,7 @@ nodes:
       - compute
       - monitoring
       - storage
-    ceph_address: 192.0.2.2
+    ceph_address: 192.168.30.2
     # Add only after the same-class OSD exists on at least three hosts:
     # ceph_osd_devices:
     #   - by_id: /dev/disk/by-id/nvme-REPLACE
@@ -85,7 +86,7 @@ nodes:
       - control
       - network
       - compute
-    ceph_address: 192.0.2.4
+    ceph_address: 192.168.30.4
     ceph_osd_devices: []
 
   cloud03:
@@ -107,5 +108,5 @@ nodes:
       - control
       - network
       - compute
-    ceph_address: 192.0.2.5
+    ceph_address: 192.168.30.5
     ceph_osd_devices: []

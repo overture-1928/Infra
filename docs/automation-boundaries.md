@@ -70,11 +70,12 @@ root 전용 `openstack.sh` Kolla 작업은 로컬 root의 SSH trust context를 �
 `--apply`가 모두 필요하다.
 
 ```bash
-export OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-STORAGE:<출력된 데이터 SSD 시리얼>:<출력된 고속 NVMe 시리얼>'
+export OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-DATA:<출력된 데이터 SSD 시리얼>:KEEP-CEPH:<출력된 Ceph NVMe 시리얼>'
 sudo --preserve-env=OPENSTACK_STORAGE_CONFIRM ./scripts/prepare-openstack-storage.sh --apply
 ```
 
-대상은 고정된 1TB SSD와 2TB NVMe다. 새 노드의 디스크를 준비하는 범용 스크립트가 아니다.
+초기화 대상은 고정된 1TB SSD 하나다. 2TB NVMe는 시리얼과 크기만 확인하고 미래 Ceph OSD로
+보존한다. 새 노드의 디스크를 준비하는 범용 스크립트가 아니다.
 
 ### Ceph OSD
 
@@ -296,7 +297,7 @@ Magnum 플래그가 켜진 상태에서 `deploy-kubernetes`를 실행하면 Kube
 
 따라서 플랫폼 순서는 `magnum_capi.enabled=true` 렌더링, management control plane VM 세
 대의 Terraform 적용, `prepare-k8s-cloud`, `deploy-kubernetes`, `platform-plan`, 확인된
-`platform-apply`, `platform-status`다. 기존 `k8s-01`의 `fast` boot volume은 유지하고 새
+`platform-apply`, `platform-status`다. 기존 `k8s-01`의 `standard` boot volume은 유지하고 새
 `k8s-02`, `k8s-03`만 Ceph를 사용한다. 기존 boot volume의 Ceph 이전은 `prevent_destroy`가
 자동 교체를 차단하므로 별도 Cinder/VM migration과 복구 시험으로 수행한다. credential
 파일은 Kubernetes 배포와 복구에 필요한 secret backup 대상이다.

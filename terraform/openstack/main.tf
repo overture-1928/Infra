@@ -26,14 +26,6 @@ resource "openstack_compute_flavor_v2" "kubernetes" {
   is_public = false
 }
 
-resource "openstack_blockstorage_volume_type_v3" "fast" {
-  count = var.enable_resources ? 1 : 0
-  name  = "fast"
-  extra_specs = {
-    volume_backend_name = "fast"
-  }
-}
-
 resource "openstack_blockstorage_volume_type_v3" "standard" {
   count = var.enable_resources ? 1 : 0
   name  = "standard"
@@ -254,7 +246,6 @@ resource "openstack_blockstorage_volume_v3" "kubernetes" {
   size     = each.value.volume_size
   image_id = data.openstack_images_image_v2.ubuntu[0].id
   volume_type = (
-    each.value.volume_type == "fast" ? openstack_blockstorage_volume_type_v3.fast[0].name :
     each.value.volume_type == "standard" ? openstack_blockstorage_volume_type_v3.standard[0].name :
     openstack_blockstorage_volume_type_v3.ceph[0].name
   )

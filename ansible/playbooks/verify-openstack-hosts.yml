@@ -63,12 +63,11 @@
       changed_when: false
       when: local_lvm_storage | bool
 
-    - name: Require the reviewed cloud01 Cinder volume groups
+    - name: Require the reviewed cloud01 Cinder volume group
       ansible.builtin.assert:
         that:
           - "'cinder-ssd' in volume_groups.stdout_lines | map('trim') | list"
-          - "'cinder-nvme' in volume_groups.stdout_lines | map('trim') | list"
-        fail_msg: The reviewed cinder-ssd and cinder-nvme volume groups are required on the LVM storage host.
+        fail_msg: The reviewed cinder-ssd volume group is required on the LVM storage host.
       when: local_lvm_storage | bool
 
     - name: Read cluster hostname IPv4 resolution
