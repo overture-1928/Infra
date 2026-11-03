@@ -156,8 +156,10 @@ Prometheus와 Grafana를 켜면 converged 세 노드의 RAM·CPU·디스크 사�
 2. **운영 workload 전:** 물리 host 한 대 전원 차단 시험과 Ceph/OpenStack/Kubernetes 상태를
    확인하고 기본 metrics·SMART·알림을 구성한다.
 3. **관리형 서비스 전:** CAPI lifecycle과 credential 복구 시험을 완료한다.
-4. **규모 확장 시:** 추가 compute 용량, 자동 evacuation, remote state와 이중화 네트워크를
-   요구 수준에 맞춰 도입한다.
+4. **스마트 플러그 준비 후:** 로컬 API 기반 STONITH를 구현하고 실제 전원 차단을 검증한 뒤
+   Masakari Host Monitor와 자동 evacuation을 활성화한다.
+5. **규모 확장 시:** 추가 compute 용량, remote state와 이중화 네트워크를 요구 수준에 맞춰
+   도입한다.
 
 첫 운영 workload 전 필수 검증 순서는 [백업과 복원](../operations/backup-and-restore.md),
 [관측과 알림](../operations/observability.md), [장애 훈련](../operations/failure-drills.md)이다.

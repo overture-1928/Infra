@@ -344,6 +344,7 @@ for required_path in (
     "terraform/openstack/terraform.tfvars",
     "terraform/workloads/<stack>/terraform.tfvars",
     "ansible/inventory/workloads/<stack>.local.yml",
+    "inventory/masakari-fencing.local.yml",
     "kolla/generated/passwords.yml",
     "terraform/openstack/terraform.tfstate*",
     "terraform/workloads/<stack>/terraform.tfstate*",
@@ -498,6 +499,16 @@ assert globals_data["enable_masakari_hostmonitor"] == "no"
 masakari_config = Path("kolla/config/masakari.conf").read_text()
 assert "evacuate_all_instances = false" in masakari_config
 assert "process_all_instances = false" in masakari_config
+masakari_doc = Path("docs/operations/masakari.md").read_text()
+for required_term in (
+    "스마트 플러그",
+    "로컬 API",
+    "inventory/masakari-fencing.local.yml",
+    "fence-status",
+    "fence-plan",
+    "fence-test",
+):
+    assert required_term in masakari_doc, f"Masakari guide omits {required_term}"
 assert globals_data["cinder_backends"] == []
 assert globals_data["cinder_backend_ceph_name"] == "ceph-rbd"
 assert globals_data["cinder_cluster_name"] == "ceph-rbd"

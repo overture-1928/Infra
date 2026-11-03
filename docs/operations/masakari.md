@@ -93,6 +93,67 @@ Host Monitor를 활성화할 때는 다음 작업을 하나의 변경으로 검�
 않는다. fencing 장치를 확정한 뒤 장치별 credential을 ignored 로컬 파일에 넣고, 읽기 전용 plan과
 정확한 확인값을 요구하는 별도 workflow를 추가해야 한다.
 
+## 결정된 후속 구현: 스마트 플러그 fencing
+
+이 홈랩은 각 물리 노드의 전원을 제어할 수 있는 스마트 플러그를 나중에 준비해 Host Monitor
+fencing에 사용한다. 제품과 API가 정해지기 전에는 특정 vendor 명령이나 credential 형식을 코드에
+고정하지 않는다.
+
+```mermaid
+flowchart LR
+  PM["Pacemaker · 살아 있는 controller"] --> AGENT["STONITH agent"]
+  AGENT --> API["관리망의 스마트 플러그 로컬 API"]
+  API --> P1["outlet 1 · cloud01"]
+  API --> P2["outlet 2 · cloud02"]
+  API --> P3["outlet 3 · cloud03"]
+  P1 --> GATE["대상 outlet OFF 상태 확인"]
+  P2 --> GATE
+  P3 --> GATE
+  GATE --> MAS["Masakari host notification"]
+  MAS --> EVAC["Nova evacuation"]
+```
+
+구매할 장치는 다음 조건을 만족해야 한다.
+
+| 항목 | 필수 기준 |
+| --- | --- |
+| 제어 방식 | 외부 cloud 없이 관리 LAN의 로컬 API로 off/on/status 수행 |
+| 상태 확인 | 명령 성공 응답뿐 아니라 실제 outlet 전원 상태 조회 가능 |
+| 독립 제어 | cloud01~03을 각각 다른 outlet으로 제어 |
+| 인증 | 장치별 또는 관리 API credential 제공, 평문 고정 비밀번호 노출 금지 |
+| 장애 독립성 | router, 관리 switch와 전원 제어 장치가 fencing 대상 host에 의존하지 않음 |
+| 전원 복구 정책 | 정전 복구 후 outlet의 on/off/last-state 동작을 명시적으로 설정 가능 |
+| 자동화 | 안정적인 CLI/API 또는 Pacemaker용 fence agent 작성 가능 |
+
+인터넷 vendor cloud만 지원하거나 상태 조회 없이 toggle만 제공하는 제품은 사용하지 않는다.
+Wi-Fi 제품을 선택한다면 OpenWrt와 관리 AP가 장애 대상 노드와 독립적으로 계속 동작해야 한다.
+가능하면 유선 관리형 PDU 또는 로컬 LAN API가 있는 장치를 우선한다.
+
+제품을 정한 뒤 다음 로컬 파일을 추가할 예정이다.
+
+```text
+inventory/masakari-fencing.local.yml
+```
+
+이 파일은 기존 `*.local.yml` 규칙으로 Git에서 제외하고 mode `0600`으로 관리한다. node와 outlet
+ID, 관리 endpoint, agent 이름과 credential 파일의 경로만 기록한다. API token과 비밀번호는
+`.secrets/masakari-fencing.env`처럼 Git에서 제외된 mode `0600` 파일에 두고 공개 예시, Kolla
+globals 또는 Terraform state에 넣지 않는다.
+
+구현할 자동화는 다음 순서를 따라야 한다.
+
+1. `fence-status`: 세 outlet과 대상 node mapping을 읽기 전용으로 검사한다.
+2. `fence-plan <node>`: 끌 outlet, 현재 전원 상태, 해당 host의 VM·Ceph 역할을 출력한다.
+3. `fence-test <node>`: 운영 VM이 없는 유지보수 시간에 정확한 확인 문자열로 한 노드만 끈다.
+4. 실제 host 전원이 꺼지고 Nova·Ceph에서 해당 host가 사라졌는지 확인한다.
+5. Pacemaker STONITH resource를 등록하고 off/status 동작을 다시 시험한다.
+6. 세 노드가 모두 통과한 뒤에만 Host Monitor와 `auto` failover segment를 활성화한다.
+7. 자동 power-on과 자동 failback은 처음에는 사용하지 않고 운영자가 원인을 확인한 뒤 복귀시킨다.
+
+스마트 플러그 fencing 시험은 한 번에 한 노드만 수행한다. 이 구조에서 compute host는 controller와
+Ceph OSD도 겸하므로, 전원을 끄기 전에 Ceph `HEALTH_OK`, OpenStack quorum, 백업과 남은 두 노드의
+N+1 용량을 확인한다.
+
 ## Management Kubernetes와 CAPI
 
 Management Kubernetes VM은 Terraform/Kubespray가 만들며 CAPI가 자기 자신을 교체하지 않는다.
@@ -120,4 +181,3 @@ Host Monitor 단계는 다음을 실제 장비에서 확인해야 완료다.
 - CAPI가 Masakari 복구 중 같은 Machine을 먼저 삭제하지 않는다.
 - 실패한 compute가 자동으로 workload를 다시 가져가지 않으며 수동 복귀 절차가 있다.
 - 장애·복구 시각과 실제 RTO가 장애 훈련 기록에 남는다.
-

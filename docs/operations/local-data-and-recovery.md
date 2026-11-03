@@ -47,6 +47,7 @@ Git clone만으로는 환경을 복구할 수 없다. 로컬 입력, credential�
 | `terraform/openstack/terraform.tfvars` | `terraform/openstack/terraform.tfvars.example` | 실제 Provider·tenant·관리망, gateway·DNS·Floating IP 범위, SSH 공개키, Kubernetes VM 주소·역할·볼륨 |
 | `terraform/workloads/<stack>/terraform.tfvars` | `terraform/workloads/_template/terraform.tfvars.example` | 서비스 VM의 OpenStack UUID, 허용 CIDR, `instances` map과 선택적 Floating IP 설정 |
 | `ansible/inventory/workloads/<stack>.local.yml` | `ansible/inventory/workloads/settings.example.yml` | Terraform output에서 Ansible inventory를 만들 때 사용할 주소 우선순위, SSH 사용자·포트·개인키 경로와 서비스 변수 |
+| `inventory/masakari-fencing.local.yml` | 스마트 플러그 제품과 API를 확정한 뒤 추가 | node/outlet mapping, 관리 endpoint, fence agent와 credential 파일 경로 |
 | `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | cloud01 HBA의 정확한 PCI 주소, vendor/product ID와 alias |
 | `kolla/config/nova.conf` | `kolla/config/nova.conf.example` | nova-api와 compute가 공유할 `storage-hba` alias |
 
@@ -93,6 +94,11 @@ topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-init
 `ansible/inventory/workloads/<stack>.local.yml`도 mode `0600`으로 유지하며 첫 plan까지
 `enable_instances = false`로 둔다. 서비스별 state를 섞지 않으며 자세한 생성·적용 절차는
 [서비스별 OpenStack VM Terraform 스택](../workloads/terraform.md)을 따른다.
+
+`inventory/masakari-fencing.local.yml`은 스마트 플러그 제품과 로컬 API가 확정된 뒤에만 만든다.
+mapping 파일은 mode `0600`으로 관리하고 실제 API token과 비밀번호는
+`.secrets/masakari-fencing.env`처럼 별도의 ignored 파일에 둔다. 두 파일 모두 저장소 밖의 암호화
+백업에 포함하며, 자세한 구매 조건과 적용 순서는 [Masakari VM 복구](masakari.md)를 따른다.
 
 실제 비밀번호, OpenStack application credential secret, kubeconfig 내용과 SSH 개인키 본문은
 이 입력 파일에 적지 않는다. cloud-init user data에도 비밀번호, 장기 token, SSH 개인키나
@@ -195,6 +201,8 @@ git check-ignore -v \
   terraform/workloads/example/terraform.tfvars \
   terraform/workloads/example/terraform.tfstate \
   ansible/inventory/workloads/example.local.yml \
+  inventory/masakari-fencing.local.yml \
+  .secrets/masakari-fencing.env \
   terraform/openstack/clouds.yaml \
   kolla/config/nova/nova-compute.conf \
   kolla/config/nova.conf \
