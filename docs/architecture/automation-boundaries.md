@@ -5,6 +5,23 @@
 이 저장소는 새 3노드 Ceph/OpenStack 구축을 기준으로 한다. 각 파괴적 작업은 바로 앞의
 읽기 전용 plan이 출력한 확인값을 요구한다.
 
+## 구현 상태
+
+파일이 존재하는 것과 실제 환경에 적용 가능한 자동화, 실제 장비에서 검증된 운영 기능을
+구분한다. 저장소 코드는 아래 범위까지 구현돼 있지만 아직 실제 장비에는 적용하지 않았다.
+
+| 영역 | 현재 상태 | 자동화가 수행하는 범위 | 아직 확인하거나 구현할 범위 |
+| --- | --- | --- | --- |
+| 3노드 OpenStack + Ceph 신규 구축 | 적용 코드 구현, 실환경 미검증 | topology 검증, Ceph bootstrap/OSD/pool, Kolla 배포와 서비스 검사 | 실제 세 장비에서 설치·장애·복원 시험 |
+| 네트워크 계획과 복구 guard | 적용 코드 구현, 실환경 미검증 | OpenWrt discovery/plan/apply, 확인 probe, rollback transaction, Netplan 렌더링 | 실제 router·switch·NIC에서 VLAN과 rollback 시험 |
+| Terraform VM + Kubespray | 적용 코드 구현, 실환경 미검증 | 저장된 tfplan으로 management VM 생성, inventory 렌더링, Kubernetes 설치·추가 노드 scale | 실제 OpenStack에서 최초 설치와 노드 장애·복구 시험 |
+| Magnum + CAPI/CAPO/ORC | 선택형 적용 코드 구현, 기본 비활성화 | 사전조건 검사, 고정 버전 provider 설치, Magnum/Octavia 배포·재구성·상태 검사 | workload image/template 준비와 cluster 생성·확장·업그레이드·삭제 lifecycle 시험 |
+| K0smotron Hosted Control Plane | manifest 초안 렌더링만 구현 | flag와 사전조건 검사 후 `Cluster`·`K0smotronControlPlane` 초안 생성 | operator 설치, worker manifest, 실제 apply/status/upgrade/delete, etcd PVC와 API 복구 시험 |
+
+따라서 Magnum/CAPI는 단순 아이디어나 manifest 초안 단계는 아니지만, 기본 topology에서는
+의도적으로 꺼져 있다. 반면 K0smotron의 `hosted-plan`은 출력 파일을 검토하기 위한 명령이며
+operator를 설치하거나 `kubectl apply`를 실행하지 않는다.
+
 ```mermaid
 flowchart LR
   INPUT["ignored 로컬 입력"] --> VALIDATE["validate · preflight"]
