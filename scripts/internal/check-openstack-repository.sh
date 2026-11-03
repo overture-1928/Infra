@@ -268,11 +268,66 @@ for visual_guide in (
     "docs/architecture/current-limitations.md",
     "docs/getting-started/installation.md",
     "docs/operations/scenarios.md",
+    "docs/operations/backup-and-restore.md",
+    "docs/operations/observability.md",
+    "docs/operations/failure-drills.md",
+    "docs/operations/ceph-day2.md",
+    "docs/operations/upgrades.md",
+    "docs/operations/security.md",
+    "docs/operations/openstack-day2.md",
+    "docs/operations/kubernetes-day2.md",
     "docs/workloads/terraform.md",
     "docs/architecture/automation-boundaries.md",
     "docs/workloads/pci-passthrough.md",
 ):
     assert "```mermaid" in Path(visual_guide).read_text(), f"{visual_guide} needs a Mermaid diagram"
+
+operations_runbook_requirements = {
+    "docs/operations/backup-and-restore.md": (
+        "openstack.sh backup",
+        "mariadb-full.tgz",
+        "복원 성공 기준",
+    ),
+    "docs/operations/observability.md": (
+        "enable_prometheus",
+        "SMART",
+        "점검 주기",
+    ),
+    "docs/operations/failure-drills.md": (
+        "중단 기준",
+        "자동 evacuation",
+        "합격 기록",
+    ),
+    "docs/operations/ceph-day2.md": (
+        "osd-plan/osd-apply",
+        "safe-to-destroy",
+        "완료 기준",
+    ),
+    "docs/operations/upgrades.md": (
+        "openstack.sh reconfigure",
+        "release upgrade",
+        "rollback",
+    ),
+    "docs/operations/security.md": (
+        "운영 PC를 분실한 경우",
+        "SSH key 정기 교체",
+        "공개 저장소에 secret을 올린 경우",
+    ),
+    "docs/operations/openstack-day2.md": (
+        "VM 생성 또는 scheduling 실패",
+        "Network와 Floating IP 진단",
+        "Volume 진단",
+    ),
+    "docs/operations/kubernetes-day2.md": (
+        "Node가 NotReady인 경우",
+        "PVC가 Pending 또는 attach 실패인 경우",
+        "LoadBalancer가 Pending인 경우",
+    ),
+}
+for runbook_name, required_terms in operations_runbook_requirements.items():
+    runbook_text = Path(runbook_name).read_text()
+    for required_term in required_terms:
+        assert required_term in runbook_text, f"{runbook_name} omits {required_term}"
 
 for guide_name in (
     "docs/getting-started/installation.md",

@@ -348,6 +348,9 @@ Terraform state와 생성 inventory는 Git에서 제외하며 외부의 암호�
 
 OpenStack과 Ceph의 장애 시험, 외부 상태 백업, Kubernetes 검증이 끝난 뒤 다음을 진행한다.
 
+- [백업과 복원 실행서](../operations/backup-and-restore.md)
+- [관측과 알림 운영서](../operations/observability.md)
+- [장애 훈련 실행서](../operations/failure-drills.md)
 - [Magnum/CAPI와 container platform](../platform/managed-services.md)
 - [cloud01 고정 스토리지 VM과 HBA 패스스루](../workloads/storage-vm.md)
 - [5·7노드 또는 compute 노드 확장](../operations/cluster-expansion.md)

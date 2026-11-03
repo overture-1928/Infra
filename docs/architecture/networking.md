@@ -71,6 +71,54 @@ ceph_address: 실제-Ceph-IP
 `/etc/netplan/99-openstack-network.yaml`에 렌더한다. 재부팅 후 `verify-hosts`가 세 interface,
 Ceph 주소와 `min_link_mbps: 10000` 이상의 실제 negotiated speed를 확인한다.
 
+## 스위치 port와 배선 확인
+
+| 연결 | switch port 역할 | 확인 |
+| --- | --- | --- |
+| OpenWrt ↔ 관리 switch | management untagged/native + VLAN 10 tagged trunk | router UCI plan의 bridge/VLAN과 일치 |
+| `cloud01`~`cloud03` `mgmt0` | management + VLAN 10 trunk | host의 `mgmt0.10`이 VLAN 10 frame 사용 |
+| `cloud01`~`cloud03` `ceph0` | Ceph 전용 10Gbps access network | gateway·일반 client 연결 없음 |
+| 향후 compute `ceph0` | 같은 Ceph client network | OSD가 없어도 RBD client 경로 필요 |
+
+NIC MAC, switch port 번호와 cable label의 대응은 공개 inventory가 아니라 로컬 운영 기록에 둔다.
+한 port씩 link를 확인하고 세 host를 동시에 재배선하지 않는다. 현재 Ceph switch 하나는 단일 장애
+지점이며, 이중 switch·bond를 구성했다고 문서에 표시해서는 안 된다.
+
+## 재부팅 후 네트워크 검증
+
+각 host에서 interface 이름, 주소, route와 negotiated speed를 확인한다.
+
+```bash
+ip -br link
+ip -br address
+ip route
+networkctl status mgmt0
+networkctl status ceph0
+sudo ethtool ceph0
+```
+
+`ceph0`에는 Ceph subnet route만 있고 default route가 없어야 한다. 세 host 사이를 source
+interface를 고정해 확인한다.
+
+```bash
+ping -I ceph0 -c 3 <다른-host의-Ceph-IP>
+ping -I mgmt0 -c 3 <다른-host의-management-IP>
+```
+
+MTU 1500이면 fragmentation 없는 최대 payload를 실제 주소로 시험한다. IPv4 기준 예시는
+`ping -M do -s 1472`이며, jumbo frame을 선택했다면 모든 host와 switch를 바꾼 뒤 선택한 MTU에
+맞는 payload로 다시 시험한다. 한 구간이라도 실패하면 1500으로 통일한다.
+
+마지막으로 자동 검증을 실행한다.
+
+```bash
+./scripts/cluster.sh verify-hosts
+./scripts/cluster.sh openwrt-status
+```
+
+링크 속도, VLAN probe, gateway 또는 Ceph peer 통신이 실패하면 Ceph/OpenStack 배포를 시작하지
+않는다.
+
 ## OpenStack 데이터 경로
 
 ```mermaid

@@ -62,13 +62,20 @@ sudo ./scripts/cluster.sh verify-openstack
 | Ceph가 `HEALTH_WARN/ERR` | 변경 중단 후 원인 확인 | 자동 복구하지 않음 |
 | Kolla 설정 변경 | render, 검토, `openstack.sh reconfigure` | 지원 |
 | 일반 VM 추가·변경 | workload plan/show/apply | 지원 |
+| VM scheduling·network·volume 문제 | OpenStack CLI로 읽기 중심 진단 | 지원 |
 | VM guest 서비스 구성 | workload inventory/configure | 지원 |
 | workload state 유실 | 백업 복원 또는 명시적 import | 자동 복구하지 않음 |
 | cloud04 이후 compute 추가 | `expand-openstack` | 조건부 지원 |
-| 기존 Ceph에 OSD 추가·교체 | 별도 유지보수 절차 작성 | 현재 미지원 |
+| 기존 Ceph에 OSD 추가·교체 | Ceph day-2 변경 계획과 버전별 명령 검토 | apply 자동화 미지원 |
 | management Kubernetes 노드 추가 | Terraform 변경 후 Kubespray scale | 추가 지원, 제거 차단 |
+| management Node/PVC/LoadBalancer 문제 | Kubernetes와 OpenStack desired state 비교 | 읽기 중심 진단 지원 |
 | HBA/HDD VM 생성 | cloud01 전용 workload | 조건부 지원 |
 | GPU VM 생성 | cloud01 전용 PCI workload | 조건부 지원 |
+| 정기 backup과 복원 시험 | 동일 시점 복구 세트 생성·checksum·격리 복원 | DB backup 지원, 전체 restore 수동 검토 |
+| 상태 감시와 알림 | CLI baseline 후 metrics/alert 설계 | 기본 metrics stack 비활성화 |
+| host·OSD·API 장애 훈련 | 한 번에 장애 하나, 중단 기준과 복구 시간 기록 | 절차 지원, 자동 주입 안 함 |
+| 버전 업그레이드 | 계층별 branch·backup·격리 검증 | release upgrade apply 미지원 |
+| 운영 PC나 credential 노출 | key·token 회전과 새 backup | 홈랩 수동 대응 |
 
 물리 host 장애, 혼합 OSD class, 단일 Ceph switch, local state와 모니터링의 현재 보장 범위는
 [현재 한계와 운영 전 검토](../architecture/current-limitations.md)를 먼저 확인한다.
@@ -204,6 +211,10 @@ Terraform은 다른 인스턴스로 해석한다. 이름 정리를 위해 key를
 root volume과 instance에는 `prevent_destroy`가 있다. 교체가 필요한 변경은 기존 VM을 즉시
 교체하는 대신 새 key의 VM을 추가하고 서비스와 데이터를 옮긴 뒤 별도 폐기 변경을 검토한다.
 
+VM이 `ERROR`이거나 network/volume이 예상 상태에 도달하지 않으면 CLI로 삭제하거나 state를
+고치기 전에 [OpenStack 일상 운영과 진단](openstack-day2.md)의 quota, placement, port와 attachment
+순서로 조사한다.
+
 ## VM에 Ansible 서비스를 구성하는 경우
 
 `ansible/playbooks/workloads/<stack>.yml`을 만들고 `workload` 그룹을 대상으로 한다. 접속 정보는
@@ -268,6 +279,8 @@ export TERRAFORM_APPLY_CONFIRM=APPLY-KUBERNETES-INFRA
 
 노드 제거와 role 제거는 자동화가 차단한다. `state/kubespray/openstack/applied-nodes.json`을
 잃었는데 kubeconfig가 남아 있으면 scale을 진행하지 않고 상태 백업부터 복원한다.
+Node NotReady, PVC attach와 LoadBalancer 문제는
+[Management Kubernetes 일상 운영](kubernetes-day2.md)의 계층별 진단을 따른다.
 
 ## cloud01에 HDD 전용 VM을 만드는 경우
 
@@ -319,6 +332,54 @@ make check
 
 `kolla/generated/passwords.yml`, Terraform state, `/etc/kolla`, `/etc/ceph`, kubeconfig와 Kubespray
 적용 상태가 복구 기준이다. 전체 목록은 [로컬 설정·비밀·상태](local-data-and-recovery.md)에 있다.
+
+## 정기 backup 또는 복원 시험을 하는 경우
+
+변경 작업이 없는 시점에 Git commit, local 입력, credential, Terraform/Kubespray state와 Kolla
+MariaDB full backup을 하나의 ID로 묶는다.
+
+```bash
+git status --short
+sudo ./scripts/ceph-cluster.sh status
+sudo ./scripts/cluster.sh verify-openstack
+sudo ./scripts/openstack.sh backup
+```
+
+MariaDB backup 위치를 추측하지 않고 Docker volume inspect로 확인한다. archive 생성, checksum,
+권한, workload 데이터와 실제 복원 순서는 [백업과 복원 실행서](backup-and-restore.md)를 따른다.
+현재 wrapper는 MariaDB restore를 제공하지 않으므로 운영 DB 위에서 임의의 restore 명령을
+실행하지 않는다.
+
+## 모니터링 또는 장애 훈련을 준비하는 경우
+
+Prometheus/Grafana를 바로 활성화하기 전에 CLI baseline, 실제 세 노드의 자원 여유, retention과
+알림 목적지를 결정한다. 최소 신호와 초기 임계값은 [관측과 알림](observability.md)을 따른다.
+
+장애 훈련은 최근 backup 검증과 `HEALTH_OK`를 전제로 한 번에 하나만 수행한다. Nova 자동
+evacuation이 없으므로 host 장애 VM의 자동 복구를 합격 조건으로 두지 않는다. host, OSD daemon,
+Ceph network, API와 management control plane별 예상 결과와 중단 기준은
+[장애 훈련 실행서](failure-drills.md)에 있다.
+
+## Ceph OSD를 증설하거나 교체하려는 경우
+
+최초 구축용 `osd-plan/osd-apply`를 다시 실행하지 않는다. 현재 health, pool/CRUSH rule, 정확한
+by-id/serial, host별 raw 용량, recovery 영향과 최근 backup을 변경 기록에 먼저 고정한다.
+
+운영 OSD apply는 아직 wrapper에 구현돼 있지 않다. 기존 class의 균형 증설, 새 SSD/HDD class,
+장애 OSD identity 확인과 완료 기준은 [Ceph 운영 변경](ceph-day2.md)을 따른다.
+
+## 버전을 올리려는 경우
+
+`config/versions.env`를 수정하는 것만으로 운영 upgrade가 완료되지 않는다. Ubuntu, Ceph,
+Kolla/OpenStack, Terraform, Kubernetes와 CAPI provider를 각각 별도 변경으로 다룬다. full backup,
+지원 경로, 시험 환경과 rollback 가능 지점을 확정한 뒤 [업그레이드와 유지보수](upgrades.md)를
+따른다. 현재 `openstack.sh`와 `ceph-cluster.sh`에는 release upgrade 진입점이 없다.
+
+## 운영 PC·SSH key·credential을 잃거나 노출한 경우
+
+이 홈랩에 저장된 실제 credential 목록부터 확인하고 분실 장비의 접속 경로를 차단한다. 새 SSH
+key와 credential을 먼저 배포·검증한 뒤 기존 것을 폐기한다. Kolla passwords를 새로 생성해 운영
+cloud에 바로 덮어쓰지 않는다. 자세한 순서는 [홈랩 보안](security.md)을 따른다.
 
 ## 아직 자동화하지 않은 작업
 

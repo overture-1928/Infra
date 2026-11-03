@@ -141,6 +141,7 @@ Ceph가 확장되지 않는다.
 
 세 호스트에 SATA SSD를 하나씩 추가한다면 `ssd` 전용 CRUSH rule과 Cinder volume type을
 만드는 방식이 적합하다. HDD는 별도 `hdd` pool로 두고 백업·아카이브 워크로드에만 사용한다.
+운영 OSD identity, 증설 plan과 교체 중단 기준은 [Ceph 운영 변경](ceph-day2.md)을 따른다.
 
 ## 관리형 플랫폼 이후의 물리 확장
 

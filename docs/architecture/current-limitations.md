@@ -141,7 +141,8 @@ Ceph, OpenStack과 management Kubernetes를 먼저 검증하기 위한 순서다
 
 Prometheus와 Grafana를 켜면 converged 세 노드의 RAM·CPU·디스크 사용량도 증가한다. 활성화 여부만
 바꾸지 말고 retention, 외부 알림 목적지, 장애 시에도 남는 저장 위치와 자원 예산을 함께
-정한다.
+정한다. 구체적인 CLI baseline, 초기 경보 조건과 점검 주기는
+[관측과 알림 운영서](../operations/observability.md)를 따른다.
 
 ## 적용 우선순위
 
@@ -152,3 +153,6 @@ Prometheus와 Grafana를 켜면 converged 세 노드의 RAM·CPU·디스크 사�
 3. **관리형 서비스 전:** CAPI lifecycle과 credential 복구 시험을 완료한다.
 4. **규모 확장 시:** 추가 compute 용량, 자동 evacuation, remote state와 이중화 네트워크를
    요구 수준에 맞춰 도입한다.
+
+첫 운영 workload 전 필수 검증 순서는 [백업과 복원](../operations/backup-and-restore.md),
+[관측과 알림](../operations/observability.md), [장애 훈련](../operations/failure-drills.md)이다.

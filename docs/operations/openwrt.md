@@ -64,6 +64,38 @@ export OPENWRT_ROLLBACK_CONFIRM='<plan 출력값>'
 ./scripts/cluster.sh openwrt-rollback
 ```
 
+transaction은 router의 `/root/openwrt-rollback/<change-id>/`에 저장되고 현재 guard는
+`/root/openwrt-rollback/current`가 가리킨다. controller에는 같은 변경의 sysupgrade와
+`/etc/config` backup을 `state/openwrt/<change-id>/`에 mode `0600`으로 복사한다. 이 directory는
+Git에서 제외하고 [백업과 복원](backup-and-restore.md)의 외부 암호화 backup에 포함한다.
+
+apply가 실패했을 때 상태에 따라 다음처럼 처리한다.
+
+| 상태 | 조치 |
+| --- | --- |
+| SSH 가능, guard armed | 전원을 끄지 말고 plan의 정확한 rollback 값으로 `openwrt-rollback` 실행 |
+| SSH 불가, router 동작 중 | rollback deadline까지 전원을 유지하고 관리 연결 복귀 대기 |
+| 자동 rollback 후 연결 복귀 | `openwrt-discover`부터 다시 실행하고 이전 plan 재사용 금지 |
+| router reboot/power loss | console에서 `/root/openwrt-rollback/current`와 `/etc/config` 확인 후 backup 복원 계획 수립 |
+| controller의 `.cache/openwrt` 유실 | 새 plan을 만들기 전 router guard 상태 확인; 확인값을 추측하지 않음 |
+
+console 복구가 필요하면 controller의 `state/openwrt/<change-id>/etc-config.tar.gz`와
+`sysupgrade-backup.tar.gz`의 checksum과 내용을 먼저 검사한다. 살아 있는 설정 위에 archive를
+무조건 풀지 않고 현재 `/etc/config`를 별도 복사한 뒤, 해당 OpenWrt firmware/version에서 만든
+backup인지 확인한다.
+
+복구 후 다음 검증을 모두 다시 실행한다.
+
+```bash
+./scripts/cluster.sh openwrt-discover
+./scripts/cluster.sh openwrt-plan
+./scripts/cluster.sh openwrt-status
+./scripts/cluster.sh verify-hosts
+```
+
+관리 gateway, Provider VLAN gateway, 세 host probe와 `fw4 check`가 정상이어야 새 apply를 시작할
+수 있다.
+
 ## OpenStack 배포 후
 
 OpenStack이 `br-ex`를 소유한 다음에는 임시 probe 주소를 그대로 유지하지 않는다. 로컬

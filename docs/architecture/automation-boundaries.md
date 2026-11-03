@@ -75,6 +75,9 @@ Ceph 자동화는 세 host와 빈 cluster의 최초 OSD 배포까지만 담당�
 - 손실된 OSD의 강제 purge
 - 재구축 또는 disaster recovery
 
+운영 OSD 변경을 검토할 때는 guard를 제거하지 않고
+[Ceph 운영 변경](../operations/ceph-day2.md)의 identity, backup, recovery와 완료 기준을 따른다.
+
 `osd-plan`과 `osd-apply`는 기존 OSD가 하나라도 있으면 중단한다. OSD를 새로 추가할 때 이
 guard를 제거하지 말고 별도 증설 workflow를 만든다.
 
@@ -140,4 +143,6 @@ SATA controller를 넘기지 않는다. HBA는 [스토리지 VM](../workloads/st
 
 실제 MAC, IP, 디스크 시리얼, SSH 키, Ceph keyring, Kolla passwords, clouds.yaml, Terraform
 state와 kubeconfig는 공개 저장소에 넣지 않는다. 파일 목록과 백업 기준은
-[로컬 설정·비밀·상태](../operations/local-data-and-recovery.md)에 있다.
+[로컬 설정·비밀·상태](../operations/local-data-and-recovery.md)에 있다. 복구 archive와 시험은
+[백업과 복원](../operations/backup-and-restore.md), 개인 운영 장비 분실과 credential 노출은
+[홈랩 보안](../operations/security.md)을 따른다.

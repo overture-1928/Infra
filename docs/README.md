@@ -43,6 +43,11 @@ flowchart TB
 4. 설치가 중단되거나 구축 후 변경이 필요하면 [상황별 운영 가이드](operations/scenarios.md)에서
    해당 상황을 선택한다.
 
+기본 cloud 구축 후에는 [백업과 복원](operations/backup-and-restore.md)을 먼저 검증하고,
+[관측과 알림](operations/observability.md)을 구성한 뒤
+[장애 훈련](operations/failure-drills.md)을 수행한다. 이 세 단계가 끝나기 전에는 관리형 플랫폼이나
+중요 workload를 운영 준비 완료로 표시하지 않는다.
+
 ## 문서 영역
 
 | 영역 | 안내 | 다루는 범위 |
@@ -76,6 +81,8 @@ flowchart TB
 | management Kubernetes | `cluster.sh terraform-plan/apply`, `cluster.sh deploy-kubernetes` |
 | 일반 VM | `cluster.sh workload-new/plan/show/apply` |
 | VM guest 구성 | `cluster.sh workload-inventory/configure` |
+| 관리형 플랫폼 | `cluster.sh platform-plan/apply/status` |
+| K0smotron 초안 | `cluster.sh hosted-plan` (렌더링만, apply하지 않음) |
 
 스크립트의 공개 진입점과 내부 구현은 [스크립트 안내](../scripts/README.md), Ansible 분류는
 [playbook 안내](../ansible/playbooks/README.md)를 따른다.

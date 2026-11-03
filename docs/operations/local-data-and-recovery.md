@@ -217,4 +217,6 @@ credential이 원격 저장소에 한 번이라도 올라갔다면 Git에서 삭
 [OpenWrt Provider VLAN 자동화](openwrt.md), Ceph 입력과 keyring은
 [Ceph 최초 구축](ceph-initial-deployment.md), management credential과 kubeconfig는
 [Magnum CAPI 관리형 서비스](../platform/managed-services.md), 일반 VM의 독립 state는
-[서비스별 OpenStack VM Terraform 스택](../workloads/terraform.md)을 따른다.
+[서비스별 OpenStack VM Terraform 스택](../workloads/terraform.md)을 따른다. 실제 archive 생성과
+복원 시험은 [백업과 복원](backup-and-restore.md), 운영 PC나 credential 노출 대응은
+[홈랩 보안](security.md)을 따른다.

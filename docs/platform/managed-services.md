@@ -317,6 +317,53 @@ Kolla 2026.2 Magnum 이미지에는 VEXXHOST `magnum-cluster-api` driver가 포�
 적용 후에는 호환되는 Kubernetes workload image를 Glance에 등록하고 Magnum cluster template을
 만든 뒤, 첫 cluster의 생성·접속·확장·업그레이드·삭제 lifecycle을 검증한다.
 
+### 첫 workload cluster 검증
+
+관리형 플랫폼은 `platform-status`만 통과했다고 운영 준비가 끝난 것이 아니다. 첫 workload
+cluster의 입력과 결과를 로컬 변경 기록에 남긴다.
+
+| 입력 | 기록할 값 |
+| --- | --- |
+| image | Glance image ID, checksum, Kubernetes/kubeadm 호환 버전 |
+| cluster template | driver, image, network, DNS, volume, master/worker flavor |
+| project | project ID, quota, CAPO가 사용할 credential 참조 |
+| topology | control plane/worker replica와 failure domain |
+| network | tenant network/subnet, API LoadBalancer, Floating IP 사용 여부 |
+| storage | root/data volume type과 Cinder CSI StorageClass |
+
+생성 전 API와 provider 상태를 저장한다.
+
+```bash
+export OS_CLIENT_CONFIG_FILE="$PWD/terraform/openstack/clouds.yaml"
+export OS_CLOUD=admin
+.cache/kolla-venv/bin/openstack image list
+.cache/kolla-venv/bin/openstack coe cluster template list
+.cache/kolla-venv/bin/openstack coe cluster list
+sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,MANAGEMENT_KUBECONFIG \
+  ./scripts/cluster.sh platform-status
+```
+
+cluster 생성 명령의 옵션은 설치된 `magnum-cluster-api` driver와 만든 template에 맞춰 검토한다.
+예시 이름이나 외부 문서의 UUID를 그대로 복사하지 않는다. 생성 중에는 Magnum 상태만 보지 않고
+management Kubernetes의 `Cluster`, `KubeadmControlPlane`, `Machine`, `OpenStackCluster` condition과
+OpenStack server/port/volume/LoadBalancer를 함께 확인한다.
+
+첫 cluster는 다음 lifecycle을 모두 통과해야 한다.
+
+1. 생성 요청이 `CREATE_COMPLETE`에 도달하고 control plane과 worker Node가 Ready다.
+2. workload kubeconfig로 API에 접속하고 Cinder PVC와 Octavia `LoadBalancer` Service를 생성·삭제한다.
+3. worker를 한 대 늘리고 새 Node와 OpenStack server가 Ready가 된 뒤 다시 줄인다.
+4. CAPO 또는 CAPI controller를 한 번 재시작해 기존 desired state에서 reconciliation을 재개한다.
+5. 지원되는 Kubernetes patch/minor upgrade를 별도 plan으로 실행하고 workload가 유지되는지 본다.
+6. cluster를 삭제하고 관련 server, port, volume, LoadBalancer, CAPI object와 credential 잔여물을
+   확인한다.
+7. 같은 template로 두 번째 cluster를 만들어 최초 성공이 우연한 수동 상태에 의존하지 않았음을
+   확인한다.
+
+각 단계의 시작·종료 시각, Magnum 상태, CAPI failure reason과 남은 OpenStack 자원을 기록한다.
+생성만 성공하고 scale, delete 또는 orphan 검사가 실패하면 관리형 서비스는 아직 운영 준비가
+끝난 것이 아니다.
+
 Magnum용 `magnum-capi` ServiceAccount와 장기 token Secret은 `magnum-system`에 생성한다. 해당
 cluster-admin kubeconfig는 `kolla/generated/magnum/kubeconfig`에 mode `0600`으로 저장되고,
 Kolla가 `/etc/kolla/config/magnum/kubeconfig`로 복사한다. 두 파일은 관리 비밀로 취급한다.
