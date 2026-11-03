@@ -381,6 +381,72 @@ plane, PVC, LoadBalancer와 CAPO worker를 현재 자동화가 생성한다고 �
 management cluster 장애가 workload control plane 장애로 이어지는 범위와 etcd PVC 복구를
 먼저 검증해야 한다.
 
+### 현재 apply를 차단하는 이유
+
+현재 template에는 `Cluster`와 `K0smotronControlPlane`만 있다. K0smotron CRD와 controller를
+설치하지 않으므로 그대로 apply하면 리소스 종류를 찾지 못해 실패한다. Operator를 수동으로
+설치하더라도 OpenStack network와 worker를 만드는 CAPO 리소스가 없어 완전한 workload
+Kubernetes가 되지 않는다.
+
+| 누락 영역 | 추가해야 할 항목 | 없을 때 발생하는 결과 |
+| --- | --- | --- |
+| Provider 설치 | 고정 버전 K0smotron operator·CRD, artifact 무결성 검사, controller Ready 확인 | `K0smotronControlPlane`을 처리할 controller가 없음 |
+| OpenStack 기반 | `OpenStackCluster`, project 범위 인증 Secret, network·subnet·security group 참조 | hosted API와 OpenStack worker가 같은 cluster로 연결되지 않음 |
+| Worker | `MachineDeployment`, bootstrap config, `OpenStackMachineTemplate`, image·flavor | API만 있고 실행 node가 없는 cluster가 됨 |
+| API endpoint | Octavia OVN LoadBalancer 도달성, 주소·port, 인증서 SAN 검증 | worker와 사용자가 API에 접속하지 못할 수 있음 |
+| etcd 저장소 | Ceph-backed StorageClass 명시, PVC 배치·용량·snapshot·restore 기준 | control plane 상태 유실 또는 복구 불가 |
+| 운영 자동화 | plan/apply/reconfigure/status와 승인값, 실패 시 재조정·정리 절차 | 부분 생성과 orphan 자원을 판별하거나 안전하게 복구하기 어려움 |
+| Magnum 연동 | 일반 kubeadm driver와 hosted 방식의 template·status 변환 경계 | Magnum 상태와 실제 CAPI 상태가 다를 수 있음 |
+
+### 구현 순서
+
+Hosted Control Plane 적용 자동화는 다음 순서로 추가한다. 앞 단계가 검증되기 전에는 다음 단계의
+apply 명령을 열지 않는다.
+
+1. `config/versions.env`에 고정된 K0smotron 버전과 CAPI/CAPO/Kubernetes 호환 조합을 검토하고,
+   다운로드 artifact의 checksum 또는 서명 검증 방식을 추가한다.
+2. management Kubernetes에 CRD와 operator를 설치하고 deployment version, Available condition,
+   필수 CRD를 `platform-status`와 같은 수준으로 검사한다.
+3. project 범위 OpenStack credential, `OpenStackCluster`, hosted control plane, API Service를 하나의
+   cluster manifest로 렌더링한다. secret 값은 `.cache` manifest나 Git 추적 파일에 평문으로
+   기록하지 않는다.
+4. CAPO `MachineDeployment`와 worker template을 연결하고 image, flavor, network, failure domain,
+   replica를 로컬 입력으로 받는다.
+5. 읽기 전용 plan과 exact confirmation을 거친 `hosted-apply`, 실제 CR·Pod·PVC·LoadBalancer·Node를
+   읽어 검증하는 `hosted-status`를 구현한다.
+6. upgrade, scale, controller 재시작, management node 장애, API LoadBalancer 장애, PVC snapshot과
+   restore, cluster 삭제를 시험한다.
+7. 일반 CAPI cluster와 Hosted Control Plane 중 어떤 방식이 Magnum cluster template에 대응하는지
+   명시하고, Magnum 상태가 CAPI condition을 올바르게 반영하는지 확인한다.
+
+```mermaid
+flowchart LR
+    VERSION["호환 버전·artifact 검증"] --> OPERATOR["K0smotron CRD·operator"]
+    OPERATOR --> INFRA["OpenStackCluster·credential"]
+    INFRA --> HCP["Hosted control plane·Ceph PVC·API LB"]
+    HCP --> WORKER["CAPO MachineDeployment worker"]
+    WORKER --> STATUS["hosted-status 정상"]
+    STATUS --> LIFE["scale·upgrade·장애·restore·delete 시험"]
+    LIFE --> MAGNUM["Magnum template와 status 연동"]
+```
+
+### apply 자동화 완료 기준
+
+다음 조건을 모두 만족해야 `hosted-plan`의 future-only 제한을 제거할 수 있다.
+
+- 새 cluster가 정해진 시간 안에 control plane Ready와 worker Node Ready에 도달한다.
+- API endpoint가 management cluster 외부와 OpenStack tenant worker에서 모두 접근 가능하다.
+- control plane replica, etcd PVC와 LoadBalancer가 선언한 수와 StorageClass를 사용한다.
+- management controller를 재시작해도 기존 desired state에서 조정을 재개한다.
+- worker scale-out/scale-in과 control plane/Kubernetes version upgrade 결과가 상태 검사에 반영된다.
+- management node 한 대 장애 및 hosted control plane Pod 재생성 후 API와 etcd가 정상이다.
+- 백업한 etcd/PVC 데이터로 별도 검증 환경에서 복원할 수 있다.
+- cluster 삭제 후 OpenStack server, port, volume, LoadBalancer와 Kubernetes Secret/PVC가 정책대로
+  정리되며, 보존 대상으로 선언한 backup은 남는다.
+- 중간 실패 시 재실행으로 수렴하거나 문서화된 rollback/cleanup 경로가 있고 orphan 검사가
+  통과한다.
+- 위 결과를 실제 장비의 버전, 적용 Git commit, 입력 checksum과 함께 기록한다.
+
 ```bash
 export HOSTED_K0S_VERSION='v1.36.0+k0s.0'
 sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,HOSTED_K0S_VERSION,MANAGEMENT_KUBECONFIG \
