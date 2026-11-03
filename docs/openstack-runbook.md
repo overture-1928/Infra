@@ -41,6 +41,19 @@ ${EDITOR:-vi} inventory/openstack-cluster.local.yml inventory/openstack-plan.loc
 
 ## 2. Ubuntu 자동 설치 seed
 
+이 단계는 대상 서버를 초기화하기 전에 현재 OS 또는 별도의 Ubuntu 작업 PC에서 실행한다.
+Ubuntu 설치 프로그램의 임시 shell에 저장소를 clone해 진행하는 방식이 아니다. 작업 PC에
+저장소가 없다면 다음처럼 공개 저장소를 받는다.
+
+```bash
+git clone https://github.com/overture-1928/Infra.git Openstack
+cd Openstack
+```
+
+공개 저장소에는 `inventory/*.local.yml`, SSH 개인키와 생성된 seed가 포함되지 않는다. 이미
+작성한 `inventory/openstack-cluster.local.yml`과 `inventory/openstack-plan.local.yml`을 현재
+checkout에 복원하거나 1단계에 따라 새로 만든 뒤 진행한다.
+
 현재 저장소와 SSH 개인키를 서버 밖에 백업하고 실제 복원이 되는지 확인한다. seed를 만드는
 작업용 Ubuntu PC에는 다음 도구가 필요하다.
 
@@ -58,7 +71,18 @@ export UBUNTU_OPERATOR_SSH_PUBLIC_KEY="$(cat ~/.ssh/id_ed25519.pub)"
 ./scripts/build-autoinstall-seed.sh
 ```
 
-Ubuntu Server 24.04 ISO와 생성된 `cloud01-autoinstall-seed.iso`를 연결한다. 부팅 항목의
+서버를 지우기 전에 다음 항목을 암호화된 외부 저장소에 복사한다. GitHub clone으로는 복구되지
+않는다.
+
+- `inventory/openstack-cluster.local.yml`
+- `inventory/openstack-plan.local.yml`
+- `ubuntu-autoinstall/generated/cloud01/cloud01-autoinstall-seed.iso`와 `.sha256`
+- seed에 넣은 공개키에 대응하는 SSH 개인키
+
+Ubuntu Server 24.04 ISO와 생성된 `cloud01-autoinstall-seed.iso`를 함께 연결한다. BMC 가상
+미디어를 사용하거나 Ubuntu 설치 매체와 별도의 CIDATA 매체를 연결할 수 있다. 현재 스크립트는
+공식 Ubuntu ISO와 seed를 합친 단일 이미지를 만들지 않는다. seed에 기록한 관리 IP, gateway와
+DNS가 설치 중에도 동작해야 installer 갱신과 패키지 설치를 완료할 수 있다. 부팅 항목의
 커널 인자에 `autoinstall`이 포함됐는지 확인하고, 설치 화면에서 OS 디스크 시리얼이
 `inventory/openstack-cluster.local.yml`에 기록한 실제 OS 디스크 시리얼인지 다시 확인한다.
 이 seed는 cloud01의 호스트명, MAC, 주소와 디스크
@@ -73,17 +97,28 @@ sudo -n true
 sudo visudo -cf /etc/sudoers.d/90-operator-ansible
 ```
 
-재부팅된 cloud01에서는 설치 전 작업용 PC의 저장소 경로를 사용하지 않는다. 자동 설치가 만든
-`operator` 계정으로 저장소를 `/home/operator/Openstack`에 복원하고, 숨김 파일인
-`terraform/openstack/.terraform.lock.hcl`도 포함됐는지 확인한다. SSH 개인키는 저장소 밖의
-`/home/operator/.ssh/id_ed25519`에 mode `0600`으로 복원한다.
+재부팅된 cloud01에서는 설치 프로그램의 임시 파일이나 설치 전 작업용 PC의 경로를 사용하지
+않는다. 설치 미디어를 분리하고 자동 설치가 만든 `operator` 계정으로 접속한 뒤 저장소를 새로
+clone한다. 관리망에서 GitHub에 연결할 수 없다면 동일한 저장소를 외부 백업에서 복원한다.
 
 ```bash
-sudo chown -R operator:operator /home/operator/Openstack
+cd /home/operator
+git clone https://github.com/overture-1928/Infra.git Openstack
+cd /home/operator/Openstack
+test -f terraform/openstack/.terraform.lock.hcl
+```
+
+Git에서 제외된 두 로컬 인벤토리와 SSH 개인키를 암호화된 외부 백업에서 각각
+`inventory/`와 `/home/operator/.ssh/`에 복원한다. clone만으로는 실제 IP, MAC 주소와 디스크
+시리얼이 돌아오지 않는다. 복원한 뒤 소유권과 권한을 확인한다.
+
+```bash
+sudo chown -R operator:operator /home/operator/Openstack /home/operator/.ssh
 chmod 0700 /home/operator/.ssh
 chmod 0600 /home/operator/.ssh/id_ed25519
 cd /home/operator/Openstack
-test -f terraform/openstack/.terraform.lock.hcl
+chmod 0600 inventory/openstack-cluster.local.yml inventory/openstack-plan.local.yml
+./scripts/cluster.sh validate
 ```
 
 `.cache/`, Terraform state, kubeconfig와 Kolla 비밀번호 같은 실행 상태는 외부 백업에서
