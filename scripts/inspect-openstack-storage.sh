@@ -23,10 +23,13 @@ import yaml
 
 path = Path(sys.argv[1])
 try:
-    storage = yaml.safe_load(path.read_text())["storage"]
+    plan = yaml.safe_load(path.read_text())
+    if plan["openstack"]["deployment"] != "fresh-three-node-ceph":
+        raise ValueError("openstack.deployment must be fresh-three-node-ceph")
+    storage = plan["storage"]
     serials = [str(storage["ceph_osd"]["serial"])]
     serials.extend(str(item["serial"]) for item in storage.get("untouched", []))
-except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
+except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
     raise SystemExit(f"cannot read protected disks from {path}: {exc}") from exc
 for serial in serials:
     if not serial.startswith("EXAMPLE-") and "REPLACE" not in serial:

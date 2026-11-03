@@ -66,34 +66,19 @@ nodes = {
     for name, node in nodes_config.items()
     if isinstance(node, dict) and node.get("enabled") is True
 }
-if not nodes:
-    abort("at least one node must be enabled")
+if len(nodes) < 3:
+    abort("the initial Ceph deployment requires at least three enabled hosts")
 
 ceph = cluster.get("ceph")
-ceph_enabled = (
-    cluster.get("storage_backend") == "ceph"
-    and isinstance(ceph, dict)
-    and ceph.get("enabled") is True
-)
+if cluster.get("storage_backend") != "ceph":
+    abort("cluster.storage_backend must be ceph for the initial three-node deployment")
+if not isinstance(ceph, dict) or ceph.get("enabled") is not True:
+    abort("cluster.ceph.enabled must be true for the initial three-node deployment")
 metadata = {
-    "enabled": ceph_enabled,
+    "enabled": True,
     "topology": str(topology_path),
     "hosts": {},
 }
-if not ceph_enabled:
-    for name in (
-        "ansible-inventory.yml",
-        "ceph-osd-spec.yml",
-        "ceph-osd-manifest.txt",
-        "ceph-osd-manifest.sha256",
-    ):
-        (cache / name).unlink(missing_ok=True)
-    (cache / "topology.json").write_text(json.dumps(metadata, indent=2) + "\n")
-    print(f"Validated topology; Ceph is disabled in {topology_path}")
-    raise SystemExit(0)
-
-if len(nodes) < 3:
-    abort("Ceph requires at least three enabled hosts")
 bootstrap_host = ceph.get("bootstrap_host")
 if bootstrap_host not in nodes:
     abort("cluster.ceph.bootstrap_host must name an enabled host")

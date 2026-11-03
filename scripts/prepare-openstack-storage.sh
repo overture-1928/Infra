@@ -33,7 +33,12 @@ import yaml
 
 path = Path(sys.argv[1])
 try:
-    storage = yaml.safe_load(path.read_text())["storage"]
+    plan = yaml.safe_load(path.read_text())
+    if plan["openstack"]["deployment"] != "fresh-three-node-ceph":
+        raise ValueError("openstack.deployment must be fresh-three-node-ceph")
+    if int(plan["kubernetes"]["initial_nodes"]) != 3:
+        raise ValueError("kubernetes.initial_nodes must be 3")
+    storage = plan["storage"]
     values = [
         str(storage["os"]["serial"]),
         str(storage["openstack_data"]["serial"]),
@@ -43,7 +48,7 @@ try:
         str(storage["ceph_osd"]["device_class"]),
     ]
     protected = [str(item["serial"]) for item in storage.get("untouched", [])]
-except (OSError, KeyError, TypeError) as exc:
+except (OSError, KeyError, TypeError, ValueError) as exc:
     raise SystemExit(f"invalid storage configuration in {path}: {exc}") from exc
 
 for serial in [values[0], values[1], values[3], *protected]:

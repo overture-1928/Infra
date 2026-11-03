@@ -11,6 +11,12 @@ output_dir="$repo_dir/ubuntu-autoinstall/generated/$node_name"
 password_hash=${UBUNTU_OPERATOR_PASSWORD_HASH:-}
 ssh_public_key=${UBUNTU_OPERATOR_SSH_PUBLIC_KEY:-}
 
+# Refuse to produce installation media from an obsolete one-node/LVM local
+# inventory. Hardware-specific values may differ, but the authoritative
+# topology must already describe the complete three-node Ceph deployment.
+python3 "$repo_dir/scripts/internal/render-openstack-cluster.py" \
+  --config "$config" --validate-only
+
 if [[ -f $repo_dir/ubuntu-autoinstall/generated/user-data ]]; then
   echo 'WARNING: legacy ubuntu-autoinstall/generated/user-data is ignored; use the per-node generated directory.' >&2
 fi
@@ -46,6 +52,8 @@ try:
     node = config["nodes"][name]
 except KeyError:
     raise SystemExit(f"unknown node in cluster inventory: {name}")
+if node.get("enabled") is not True:
+    raise SystemExit(f"node is not enabled in the reviewed three-node topology: {name}")
 
 required = [
     "management_interface",

@@ -436,8 +436,17 @@ def validate_networks(
         for name, values in nodes.items()
         if isinstance(values, dict) and values.get("enabled") is True
     }
-    if not enabled_nodes:
-        fail("cluster config must contain at least one enabled node")
+    if len(enabled_nodes) < 3:
+        fail("cluster config must contain at least three enabled nodes")
+    if openstack.get("deployment") != "fresh-three-node-ceph":
+        fail("openstack.deployment must be fresh-three-node-ceph")
+    if cluster.get("storage_backend") != "ceph":
+        fail("cluster.storage_backend must be ceph")
+    ceph = require_mapping(cluster.get("ceph"), "cluster config cluster.ceph")
+    if ceph.get("enabled") is not True:
+        fail("cluster.ceph.enabled must be true")
+    if kubernetes.get("initial_nodes") != 3:
+        fail("kubernetes.initial_nodes must be 3")
     for name, values in enabled_nodes.items():
         if contains_replace(values):
             fail(f"enabled node {name} still contains a REPLACE value")
@@ -544,9 +553,7 @@ def validate_networks(
 
     declared_probes = declared_provider.get("probe_addresses")
     if declared_probes is None:
-        if len(enabled_nodes) != 1:
-            fail("networks.provider.probe_addresses must map every enabled node to a unique address")
-        declared_probes = {next(iter(enabled_nodes)): declared_provider.get("probe_address")}
+        fail("networks.provider.probe_addresses must map every enabled node to a unique address")
     declared_probes = require_mapping(declared_probes, "networks.provider.probe_addresses")
     deployed_nodes = [
         require_string(name, "networks.provider.deployed_nodes[]")
