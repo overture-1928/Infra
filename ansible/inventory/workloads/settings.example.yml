@@ -1,0 +1,10 @@
+address_source: auto
+ansible_user: ubuntu
+ansible_port: 22
+ansible_ssh_private_key_file: null
+ansible_ssh_common_args: null
+
+group_vars: {}
+
+# Keys below are Terraform instances map keys, not generated OpenStack names.
+host_vars: {}

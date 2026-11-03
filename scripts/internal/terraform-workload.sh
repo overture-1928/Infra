@@ -10,6 +10,10 @@ terraform_bin=${TERRAFORM_BIN:-$repo_dir/.cache/terraform/bin/terraform}
 workloads_dir="$repo_dir/terraform/workloads"
 template_dir="$workloads_dir/_template"
 cache_dir="$repo_dir/.cache/terraform/workloads"
+ansible_settings_dir="$repo_dir/ansible/inventory/workloads"
+ansible_settings_template="$ansible_settings_dir/settings.example.yml"
+ansible_cache_dir="$repo_dir/.cache/ansible/workloads"
+inventory_renderer="$repo_dir/scripts/internal/render-workload-ansible-inventory.py"
 template_files=(
   .terraform.lock.hcl
   README.md
@@ -32,6 +36,8 @@ Usage: scripts/internal/terraform-workload.sh COMMAND [STACK]
   show STACK     show the saved plan and its SHA-256 confirmation value
   apply STACK    apply the exact saved plan serially (confirmation required)
   output STACK   show outputs from the stack's Terraform state
+  inventory STACK render a private Ansible inventory from Terraform output
+  configure STACK render inventory and run ansible/playbooks/workloads/STACK.yml
   help           show this help
 
 STACK must be 1-63 characters and match ^[a-z0-9][a-z0-9-]{0,62}$;
@@ -48,6 +54,8 @@ After reviewing `plan` or `show`, apply with the exact value they print:
 Saved plans:    .cache/terraform/workloads/<stack>.tfplan
 Plan context:   .cache/terraform/workloads/<stack>.tfplan.context.json
 Default state:  terraform/workloads/<stack>/terraform.tfstate
+SSH settings:   ansible/inventory/workloads/<stack>.local.yml
+Inventory:      .cache/ansible/workloads/<stack>.yml
 HELP
 }
 
@@ -75,6 +83,14 @@ plan_path() {
 
 plan_context_path() {
   printf '%s/%s.tfplan.context.json\n' "$cache_dir" "$1"
+}
+
+ansible_settings_path() {
+  printf '%s/%s.local.yml\n' "$ansible_settings_dir" "$1"
+}
+
+ansible_inventory_path() {
+  printf '%s/%s.yml\n' "$ansible_cache_dir" "$1"
 }
 
 require_stack() {
@@ -205,6 +221,19 @@ ensure_cache_directory() {
     fi
   done
   chmod 0700 "$cache_dir"
+}
+
+ensure_ansible_cache_directory() {
+  local component
+  for component in "$repo_dir/.cache" "$repo_dir/.cache/ansible" "$ansible_cache_dir"; do
+    [[ ! -L $component ]] || fail "Workload Ansible cache path must not be a symbolic link: $component"
+    if [[ -e $component ]]; then
+      [[ -d $component ]] || fail "Workload Ansible cache path is not a directory: $component"
+    else
+      mkdir -m 0700 -- "$component"
+    fi
+  done
+  chmod 0700 "$ansible_cache_dir"
 }
 
 acquire_workload_lock() {
@@ -443,11 +472,14 @@ print_confirmation() {
 }
 
 new_stack() {
-  local stack=$1 directory template_file cleanup_command
+  local stack=$1 directory template_file cleanup_command settings
   directory=$(stack_path "$stack")
+  settings=$(ansible_settings_path "$stack")
 
   [[ -d $template_dir && ! -L $template_dir ]] || \
     fail "Workload template is missing: $template_dir"
+  [[ -f $ansible_settings_template && ! -L $ansible_settings_template ]] || \
+    fail "Workload Ansible settings template is missing: $ansible_settings_template"
   [[ ! -e $directory && ! -L $directory ]] || fail "Workload stack already exists: $directory"
   for template_file in "${template_files[@]}"; do
     [[ -f $template_dir/$template_file && ! -L $template_dir/$template_file ]] || \
@@ -464,9 +496,17 @@ new_stack() {
     fi
   done
   install -m 0600 "$directory/terraform.tfvars.example" "$directory/terraform.tfvars"
+  if [[ -e $settings || -L $settings ]]; then
+    require_private_regular_file "$settings" 'Workload Ansible settings'
+  else
+    install -m 0600 "$ansible_settings_template" "$settings"
+    printf -v cleanup_command 'rm -rf -- %q; rm -f -- %q' "$directory" "$settings"
+    trap "$cleanup_command" EXIT
+  fi
   trap - EXIT
 
   printf 'Created workload stack: %s\n' "$directory"
+  printf 'Created workload Ansible settings: %s\n' "$settings"
   printf 'Edit %s, then run scripts/cluster.sh workload-plan %s.\n' \
     "$directory/terraform.tfvars" "$stack"
 }
@@ -561,6 +601,53 @@ output_stack() {
   flock -u 9
 }
 
+render_workload_inventory() {
+  local stack=$1 directory settings inventory instances_json cleanup_command
+  directory=$(stack_path "$stack")
+  settings=$(ansible_settings_path "$stack")
+  inventory=$(ansible_inventory_path "$stack")
+
+  acquire_workload_lock
+  prepare_terraform_environment "$stack"
+  initialize_terraform "$stack"
+  require_private_regular_file "$settings" 'Workload Ansible settings'
+  [[ -x $inventory_renderer ]] || fail "Workload inventory renderer is missing or not executable: $inventory_renderer"
+  ensure_ansible_cache_directory
+  instances_json="$ansible_cache_dir/.$stack.instances.tmp.$$"
+  rm -f -- "$instances_json"
+  printf -v cleanup_command 'rm -f -- %q' "$instances_json"
+  trap "$cleanup_command" EXIT
+  "$terraform_bin" -chdir="$directory" output -json instances >"$instances_json"
+  chmod 0600 "$instances_json"
+  "$inventory_renderer" \
+    --stack "$stack" \
+    --instances-json "$instances_json" \
+    --settings "$settings" \
+    --output "$inventory"
+  rm -f -- "$instances_json"
+  trap - EXIT
+  flock -u 9
+}
+
+configure_workload() {
+  local stack=$1 inventory playbook executable
+  inventory=$(ansible_inventory_path "$stack")
+  playbook="$repo_dir/ansible/playbooks/workloads/$stack.yml"
+
+  render_workload_inventory "$stack"
+  [[ -f $playbook && ! -L $playbook ]] || \
+    fail "Workload playbook is missing or is a symbolic link: $playbook"
+  if [[ -x $repo_dir/.cache/kolla-venv/bin/ansible-playbook ]]; then
+    executable="$repo_dir/.cache/kolla-venv/bin/ansible-playbook"
+  else
+    executable=$(command -v ansible-playbook || true)
+  fi
+  [[ -n $executable ]] || fail 'Install ansible-core or run scripts/cluster.sh setup.'
+  ANSIBLE_CONFIG="$repo_dir/ansible/ansible.cfg" \
+  ANSIBLE_LOCAL_TEMP=/tmp/openstack-workload-ansible \
+    "$executable" -i "$inventory" "$playbook"
+}
+
 command_name=${1:-help}
 if [[ $# -gt 0 ]]; then
   shift
@@ -590,6 +677,14 @@ case "$command_name" in
   output)
     require_stack_argument output "$@"
     output_stack "$1"
+    ;;
+  inventory)
+    require_stack_argument inventory "$@"
+    render_workload_inventory "$1"
+    ;;
+  configure)
+    require_stack_argument configure "$@"
+    configure_workload "$1"
     ;;
   *)
     fail "Unknown command: $command_name. Run scripts/internal/terraform-workload.sh help."

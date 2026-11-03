@@ -145,6 +145,8 @@ Usage: scripts/cluster.sh COMMAND [ARGUMENTS]
   workload-show STACK  show a saved workload plan and its SHA-256 confirmation
   workload-apply STACK apply the exact saved workload plan serially (confirmation)
   workload-output STACK show outputs from one workload stack's state
+  workload-inventory STACK render Ansible inventory from workload Terraform output
+  workload-configure STACK render inventory and run the stack's Ansible playbook
   deploy-kubernetes    install or scale Kubernetes through Kubespray
   prepare-k8s-cloud    create a dedicated non-admin management-cloud credential
   platform-plan        verify the 3-node/Ceph management-service prerequisites (root)
@@ -243,6 +245,12 @@ HELP
     ;;
   workload-output)
     "$repo_dir/scripts/internal/terraform-workload.sh" output "${@:2}"
+    ;;
+  workload-inventory)
+    "$repo_dir/scripts/internal/terraform-workload.sh" inventory "${@:2}"
+    ;;
+  workload-configure)
+    "$repo_dir/scripts/internal/terraform-workload.sh" configure "${@:2}"
     ;;
   deploy-kubernetes)
     "$repo_dir/scripts/internal/deploy-openstack-kubernetes.sh"

@@ -22,6 +22,7 @@ Git에서 제외되는 로컬 입력 파일과 자동 생성되는 비밀 파일
 | `inventory/openwrt-router.local.yml` | `inventory/openwrt-router.example.yml` | OpenWrt 주소와 계정, SSH 키 **경로**, discovery에서 확인한 모델·버전·DSA bridge·포트, 실제 VLAN과 망 계획 |
 | `terraform/openstack/terraform.tfvars` | `terraform/openstack/terraform.tfvars.example` | 실제 Provider·tenant·관리망, gateway·DNS·Floating IP 범위, SSH 공개키, Kubernetes VM 주소·역할·볼륨 |
 | `terraform/workloads/<stack>/terraform.tfvars` | `terraform/workloads/_template/terraform.tfvars.example` | 서비스 VM의 OpenStack UUID, 허용 CIDR, `instances` map과 선택적 Floating IP 설정 |
+| `ansible/inventory/workloads/<stack>.local.yml` | `ansible/inventory/workloads/settings.example.yml` | Terraform output에서 Ansible inventory를 만들 때 사용할 주소 우선순위, SSH 사용자·포트·개인키 경로와 서비스 변수 |
 | `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | cloud01 HBA의 정확한 PCI 주소, vendor/product ID와 alias |
 | `kolla/config/nova.conf` | `kolla/config/nova.conf.example` | nova-api와 compute가 공유할 `storage-hba` alias |
 
@@ -64,7 +65,8 @@ topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-tran
 인벤토리의 주소로 바꾸고 `enable_resources = false` 상태에서 첫 plan을 확인한다.
 
 일반 VM 스택은 `cluster.sh workload-new <stack>`으로 만든다. 명령이 생성한
-`terraform/workloads/<stack>/terraform.tfvars`도 mode `0600`으로 유지하며 첫 plan까지
+`terraform/workloads/<stack>/terraform.tfvars`와
+`ansible/inventory/workloads/<stack>.local.yml`도 mode `0600`으로 유지하며 첫 plan까지
 `enable_instances = false`로 둔다. 서비스별 state를 섞지 않으며 자세한 생성·적용 절차는
 [서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)을 따른다.
 
@@ -119,6 +121,7 @@ Kolla MariaDB 백업, Cinder 볼륨, Glance 이미지와 Ceph MON 데이터는 �
 - `.terraform.tfstate.lock.info`의 실행 중 local state 잠금 정보
 - `.cache/terraform/workloads/`의 저장된 workload plan과 `.tfplan.context.json`. 재생성
   가능하지만 plan에는 민감한 값이 포함될 수 있으므로 공개하거나 Git에 추가하지 않음
+- `.cache/ansible/workloads/`의 Terraform output 기반 workload inventory
 - `kolla/inventory/multinode.local`, `kolla/generated/multinode`, `globals.yml`
 - `.cache/cluster/`, `.cache/ceph/`, `.cache/kubespray-inventory/`의 plan과 manifest
 - `ubuntu-autoinstall/generated/`의 user-data, meta-data와 seed ISO
@@ -167,6 +170,7 @@ git check-ignore -v \
   terraform/openstack/terraform.tfvars \
   terraform/workloads/example/terraform.tfvars \
   terraform/workloads/example/terraform.tfstate \
+  ansible/inventory/workloads/example.local.yml \
   terraform/openstack/clouds.yaml \
   kolla/config/nova/nova-compute.conf \
   kolla/config/nova.conf \

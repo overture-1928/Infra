@@ -172,6 +172,44 @@ VM·포트·Floating IP 등의 출력을 읽는다. `security_group_id`와
 `instances[<key>].{instance_id,instance_name,port_id,fixed_ips,root_volume_id,floating_ip}`를
 이후 운영 입력에 사용할 수 있다.
 
+## Ansible inventory 자동 생성
+
+`workload-new`는 Terraform root와 함께
+`ansible/inventory/workloads/<stack>.local.yml`을 mode `0600`으로 만든다. 이 파일에는
+VM 접속 사용자, SSH 개인키의 절대경로와 주소 선택 방식을 기록한다. 개인키 본문은 넣지 않는다.
+
+```yaml
+address_source: auto
+ansible_user: ubuntu
+ansible_port: 22
+ansible_ssh_private_key_file: /home/operator/.ssh/id_ed25519
+ansible_ssh_common_args: null
+group_vars: {}
+host_vars: {}
+```
+
+Terraform 적용 후 다음 명령은 `instances` output을 JSON으로 읽고 Floating IP 또는 fixed IP를
+선택해 mode `0600`의 `.cache/ansible/workloads/web.yml`을 원자적으로 생성한다. `auto`는
+Floating IP를 우선 사용한다. Terraform `instances` map key별 변수가 필요하면 `host_vars`에
+같은 key로 추가한다.
+
+```bash
+./scripts/cluster.sh workload-inventory web
+```
+
+서비스 설정은 `ansible/playbooks/workloads/web.yml`에 작성하고 생성 inventory의 `workload`
+그룹을 대상으로 한다. 다음 명령은 최신 Terraform output으로 inventory를 다시 생성한 뒤 해당
+playbook을 실행한다.
+
+```bash
+./scripts/cluster.sh workload-configure web
+```
+
+Terraform이 VM을 만들기 전이거나 output에 인스턴스가 없으면 inventory 생성을 거부한다. 선택한
+주소가 없거나 IP 형식이 잘못된 경우, settings에 존재하지 않는 instance key를 넣은 경우와 SSH
+키 경로가 상대경로·읽기 불가능한 파일인 경우에도 실패한다. 생성 inventory는 캐시이므로 직접
+수정하지 않고 Terraform output 또는 `<stack>.local.yml`을 고친 뒤 다시 생성한다.
+
 ## VM 추가와 map key
 
 기존 스택에 VM을 추가할 때는 `instances` map에 새 항목을 넣고 같은 plan/show/apply 순서를

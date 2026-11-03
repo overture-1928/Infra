@@ -99,6 +99,13 @@ while IFS= read -r -d '' workload_tfvars; do
   }
 done < <(find terraform/workloads -mindepth 2 -maxdepth 2 -type f -name terraform.tfvars -print0 2>/dev/null)
 
+while IFS= read -r -d '' workload_ansible_settings; do
+  [[ $(stat -c '%a' "$workload_ansible_settings") == 600 ]] || {
+    echo "Local workload Ansible settings must use mode 0600: $workload_ansible_settings" >&2
+    exit 1
+  }
+done < <(find ansible/inventory/workloads -maxdepth 1 -type f -name '*.local.yml' -print0 2>/dev/null)
+
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   tracked_ignored=$(git ls-files -ci --exclude-standard)
   [[ -z $tracked_ignored ]] || {
@@ -220,6 +227,7 @@ for required_path in (
     "inventory/openwrt-router.local.yml",
     "terraform/openstack/terraform.tfvars",
     "terraform/workloads/<stack>/terraform.tfvars",
+    "ansible/inventory/workloads/<stack>.local.yml",
     "kolla/generated/passwords.yml",
     "terraform/openstack/terraform.tfstate*",
     "terraform/workloads/<stack>/terraform.tfstate*",
@@ -461,7 +469,7 @@ assert re.search(r"(?m)^enable_instances\s*=\s*false$", workload_example)
 for variable in ("network_id", "subnet_id", "image_id", "flavor_id", "instances"):
     assert re.search(rf"(?m)^\s*{variable}\s*=", workload_example), variable
 workload_script = Path("scripts/internal/terraform-workload.sh").read_text()
-for command in ("new", "plan", "show", "apply", "output"):
+for command in ("new", "plan", "show", "apply", "output", "inventory", "configure"):
     assert re.search(rf"(?m)^\s*{command}\)$", workload_script), command
 assert "APPLY-TERRAFORM-WORKLOAD:$stack:$digest" in workload_script
 assert 'plan -input=false -lock=true -var="workload_name=$stack"' in workload_script
@@ -471,7 +479,11 @@ assert 'cloud_context_sha256' in workload_script
 assert 'tfplan.context.json' in workload_script
 assert 'for template_file in "${template_files[@]}"' in workload_script
 assert 'cp -a "$template_dir/."' not in workload_script
-assert "workload-plan" in cluster_script and "workload-apply" in cluster_script
+for command in ("workload-plan", "workload-apply", "workload-inventory", "workload-configure"):
+    assert command in cluster_script, command
+inventory_renderer = Path("scripts/internal/render-workload-ansible-inventory.py")
+assert inventory_renderer.exists() and inventory_renderer.stat().st_mode & 0o111
+assert Path("ansible/inventory/workloads/settings.example.yml").is_file()
 assert "docs/terraform-workloads.md" in Path("README.md").read_text()
 PY
 
@@ -1638,11 +1650,16 @@ workload_repo="$work_dir/workload-repo"
 mkdir -p \
   "$workload_repo/scripts/internal" \
   "$workload_repo/config" \
+  "$workload_repo/ansible/inventory/workloads" \
+  "$workload_repo/ansible/playbooks/workloads" \
   "$workload_repo/terraform/modules" \
   "$workload_repo/terraform/workloads" \
   "$workload_repo/.cache/terraform/bin"
 cp scripts/internal/terraform-workload.sh "$workload_repo/scripts/internal/"
+cp scripts/internal/render-workload-ansible-inventory.py "$workload_repo/scripts/internal/"
 cp config/versions.env "$workload_repo/config/"
+cp ansible/inventory/workloads/settings.example.yml \
+  "$workload_repo/ansible/inventory/workloads/"
 cp -a terraform/modules/openstack-vm "$workload_repo/terraform/modules/"
 cp -a terraform/workloads/_template "$workload_repo/terraform/workloads/"
 printf 'fake certificate authority\n' >"$workload_repo/ca.pem"
@@ -1727,11 +1744,18 @@ case "$operation" in
     : >"$workdir/terraform.tfstate"
     ;;
   output)
-    printf 'instances = {}\n'
+    if [[ " $* " == *" -json instances "* ]]; then
+      stack=$(basename "$workdir")
+      printf '{"node-01":{"instance_id":"instance-%s","instance_name":"%s-node-01","fixed_ips":["10.20.0.11"],"floating_ip":"198.51.100.61"}}\n' \
+        "$stack" "$stack"
+    else
+      printf 'instances = {}\n'
+    fi
     ;;
 esac
 SH
 chmod 0755 "$workload_repo/scripts/internal/terraform-workload.sh" \
+  "$workload_repo/scripts/internal/render-workload-ansible-inventory.py" \
   "$workload_repo/.cache/terraform/bin/terraform"
 workload_cli="$workload_repo/scripts/internal/terraform-workload.sh"
 fake_terraform="$workload_repo/.cache/terraform/bin/terraform"
@@ -1765,6 +1789,7 @@ for contaminated_path in \
   [[ ! -e $workload_repo/terraform/workloads/database/$contaminated_path ]]
 done
 [[ $(stat -c '%a' "$workload_repo/terraform/workloads/app/terraform.tfvars") == 600 ]]
+[[ $(stat -c '%a' "$workload_repo/ansible/inventory/workloads/app.local.yml") == 600 ]]
 chmod 0644 "$workload_repo/terraform/workloads/app/terraform.tfvars"
 if (cd "$workload_repo" && \
   OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
@@ -1946,6 +1971,35 @@ rm "$workload_repo/terraform/workloads/app/terraform.tfstate.backup"
 (cd "$workload_repo" && \
   OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
   "$workload_cli" output app >/dev/null)
+chmod 0644 "$workload_repo/ansible/inventory/workloads/app.local.yml"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" inventory app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted insecure Ansible settings permissions.' >&2
+  exit 1
+fi
+chmod 0600 "$workload_repo/ansible/inventory/workloads/app.local.yml"
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" inventory app >/dev/null)
+workload_inventory="$workload_repo/.cache/ansible/workloads/app.yml"
+[[ -f $workload_inventory && ! -L $workload_inventory ]]
+[[ $(stat -c '%a' "$workload_inventory") == 600 ]]
+python3 - "$workload_inventory" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+inventory = yaml.safe_load(Path(sys.argv[1]).read_text())
+workload = inventory["all"]["children"]["workload"]
+assert workload["vars"]["workload_name"] == "app"
+assert workload["vars"]["ansible_user"] == "ubuntu"
+host = workload["hosts"]["app-node-01"]
+assert host["ansible_host"] == "198.51.100.61"
+assert host["terraform_instance_key"] == "node-01"
+assert host["openstack_instance_id"] == "instance-app"
+PY
 ln -s ../app/.terraform "$workload_repo/terraform/workloads/database/.terraform"
 if (cd "$workload_repo" && \
   OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
