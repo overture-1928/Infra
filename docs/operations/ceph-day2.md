@@ -3,9 +3,9 @@
 > 문서 위치: [전체 문서](../README.md) · [운영과 복구](README.md)
 
 최초 OSD 세 개는 [Ceph 최초 구축](ceph-initial-deployment.md)의 자동화로 만든다. 이 문서는
-운영 중 capacity 확장과 장애 장치 교체를 준비하는 기준이다. 현재 `ceph-cluster.sh`는 운영
-cluster에 OSD가 하나라도 있으면 `osd-plan/osd-apply`를 차단하므로, 아래 절차가 기존 명령의
-guard를 우회하는 방법은 아니다.
+운영 중 균형 OSD 추가 자동화와 장애 장치 교체·제거의 별도 검토 기준을 설명한다.
+`osd-plan/osd-apply`는 계속 빈 cluster 전용이며 운영 추가에는
+`osd-expand-plan/osd-expand-apply/osd-expand-status`만 사용한다.
 
 ## 변경 원칙
 
@@ -97,25 +97,91 @@ HDD pool을 VM root와 latency-sensitive database의 기본 type으로 만들지
 
 ## OSD 추가 변경 계획
 
-실제 적용 전 다음 내용이 채워진 변경 기록을 만든다.
+OSD 추가 자동화는 장치 검색 결과를 보고 임의의 디스크를 선택하지 않는다. topology와 별도 change
+파일에 동일한 장치를 두 번 명시하고, 현재 cluster identity와 OSD 수까지 고정한다.
 
-```text
-change ID:
-Ceph FSID:
-대상 host:
-정확한 by-id:
-serial / model / size / class:
-예상 OSD 수와 host별 raw 변화:
-사용할 CRUSH rule과 영향 pool:
-최근 backup ID와 restore 검증일:
-관찰할 VM/Cinder 시험 workload:
-중단 기준:
-원복 또는 장치 격리 방법:
+```bash
+umask 077
+cp inventory/ceph-osd-expansion.example.yml \
+  inventory/ceph-osd-expansion.local.yml
+chmod 0600 inventory/ceph-osd-expansion.local.yml
+
+sudo cephadm shell -- ceph fsid
+sudo cephadm shell -- ceph osd ls --format json
 ```
 
-cephadm의 실제 OSD 추가 명령과 service spec 형식은 pin된 Ceph 버전에 맞춰 검토하고 dry-run
-출력을 변경 기록에 첨부한다. 현재 repository wrapper에는 운영 OSD 추가 승인값, dry-run digest와
-사후 topology reconciliation이 없으므로 직접 적용을 정식 자동화 완료로 간주하지 않는다.
+다음 두 파일에 새 장치를 기록한다.
+
+1. `inventory/openstack-cluster.local.yml`의 각 host `ceph_osd_devices`에 새 장치를 추가한다.
+2. `inventory/ceph-osd-expansion.local.yml`에는 **이번 변경에 추가할 장치만** 기록한다.
+
+각 change 장치는 topology의 한 항목과 by-id, serial, 최소 크기와 class가 정확히 같아야 한다.
+같은 class는 세 storage host 이상에 동일한 개수로 추가해야 한다. FSID와 현재 OSD 수는 위 명령의
+직전 출력으로 채운다.
+
+```yaml
+schema_version: 1
+change_id: add-ssd-tier-01
+expected_fsid: 11111111-2222-3333-4444-555555555555
+expected_current_osd_count: 3
+devices:
+  cloud01:
+    - by_id: /dev/disk/by-id/ata-실제-cloud01-ssd-id
+      serial: 실제-cloud01-시리얼
+      min_size_bytes: 1800000000000
+      device_class: ssd
+  cloud02:
+    - by_id: /dev/disk/by-id/ata-실제-cloud02-ssd-id
+      serial: 실제-cloud02-시리얼
+      min_size_bytes: 1800000000000
+      device_class: ssd
+  cloud03:
+    - by_id: /dev/disk/by-id/ata-실제-cloud03-ssd-id
+      serial: 실제-cloud03-시리얼
+      min_size_bytes: 1800000000000
+      device_class: ssd
+```
+
+### 증설 plan과 apply
+
+```bash
+export OPENSTACK_CLUSTER_CONFIG="$PWD/inventory/openstack-cluster.local.yml"
+export CEPH_OSD_EXPANSION_CONFIG="$PWD/inventory/ceph-osd-expansion.local.yml"
+
+sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,CEPH_OSD_EXPANSION_CONFIG \
+  ./scripts/ceph-cluster.sh osd-expand-plan
+```
+
+Plan은 다음 조건을 모두 검사한다.
+
+- topology가 유효한 3노드 이상 Ceph 구성이다.
+- change의 모든 장치가 topology에 정확히 존재한다.
+- class별로 세 host 이상에 동일한 장치 수를 추가한다.
+- 실제 FSID와 현재 OSD 수가 change 파일과 같다.
+- Ceph가 `HEALTH_OK`다.
+- by-id, serial, 크기, 회전 여부와 transport가 선언한 class와 같다.
+- mount, holder, filesystem, LVM, mdraid와 기존 Ceph signature가 없는 빈 장치다.
+- cephadm OSD service spec dry-run이 성공한다.
+
+출력된 manifest, OSD 수 변화와 SHA-256을 검토한 뒤 출력된 확인값을 그대로 사용한다.
+
+```bash
+export CEPH_OSD_EXPANSION_CONFIRM='ADD-CEPH-OSDS:<change-id>:<현재-osd수>:<sha256>'
+sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,CEPH_OSD_EXPANSION_CONFIG,CEPH_OSD_EXPANSION_CONFIRM \
+  ./scripts/ceph-cluster.sh osd-expand-apply
+```
+
+Apply는 plan 전체를 다시 실행한다. 그 사이 FSID, OSD 수, health, 장치 상태 또는 manifest가
+바뀌면 중단한다. 적용 후 다음 명령으로 목표 OSD 수와 recovery를 확인한다.
+
+```bash
+sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,CEPH_OSD_EXPANSION_CONFIG \
+  ./scripts/ceph-cluster.sh osd-expand-status
+```
+
+목표 OSD 수에 도달하고 `HEALTH_OK`가 될 때까지 다른 OSD 변경을 시작하지 않는다. 이 자동화는
+OSD 추가만 수행한다. 새 `ssd`/`hdd` class의 CRUSH rule, pool과 Cinder backend/type은 I/O 시험과
+OpenStack 설정 변경이 포함되므로 별도 변경으로 적용한다.
 
 ## 장애 OSD 교체
 
@@ -184,5 +250,6 @@ sudo cephadm shell -- ceph osd df tree
 - host별 raw와 사용률 불균형을 기록했다.
 - 변경 후 새 backup과 [장애 훈련](failure-drills.md) 범위를 갱신했다.
 
-운영 OSD 변경을 반복할 계획이라면 수동 명령을 계속 복사하지 말고, 최초 배포 guard와 분리된
-`day2 osd plan/apply/status` 자동화를 먼저 구현한다.
+운영 OSD 추가는 최초 배포 guard와 분리된 `osd-expand-plan/apply/status`만 사용한다. 장애 OSD
+교체·제거는 `safe-to-destroy`와 장치 identity를 다루는 별도 자동화가 구현되기 전까지 수동 검토
+범위로 유지한다.

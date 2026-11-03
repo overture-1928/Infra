@@ -176,7 +176,7 @@ SATA SSD를 추가할 때는 세 노드에 같은 class와 비슷한 용량으�
 별도 pool/Cinder type을 만든다. HDD는 VM root나 데이터베이스 대신 백업·아카이브용 `hdd`
 pool로 분리한다.
 
-현재 자동화는 운영 cluster의 OSD 추가를 실행하지 않는다. 새 장치를 topology에 적었다고
-`osd-apply`를 다시 실행해서는 안 된다. 기존 데이터와 recovery 영향을 검토한 cephadm 증설
-절차를 별도로 작성한 뒤 적용한다. 구체적인 변경 기록, device class, 장애 교체와 완료 기준은
+새 장치를 topology에 적었다고 `osd-apply`를 다시 실행해서는 안 된다. 운영 cluster의 균형 OSD
+추가는 별도 `inventory/ceph-osd-expansion.local.yml`과 `osd-expand-plan/apply/status`를 사용한다.
+구체적인 변경 기록, device class, 장애 교체와 완료 기준은
 [Ceph 운영 변경](ceph-day2.md)을 따른다.

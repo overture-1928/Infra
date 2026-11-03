@@ -128,8 +128,8 @@ sudo cephadm shell -- ceph -s
 ## Ceph OSD 증설 경계
 
 `scripts/ceph-cluster.sh osd-plan/osd-apply`는 빈 클러스터의 최초 OSD 배포 전용이다. 운영
-cluster에 OSD가 존재하면 중단한다. 따라서 새 compute의 디스크를 topology에 추가하는 것만으로
-Ceph가 확장되지 않는다.
+cluster에 OSD가 존재하면 중단한다. 새 compute의 디스크를 topology에 추가한 뒤에도 별도
+`ceph-osd-expansion.local.yml`과 `osd-expand-plan/apply/status`를 실행해야 Ceph가 확장된다.
 
 운영 OSD 증설에는 다음 검토가 필요하다.
 

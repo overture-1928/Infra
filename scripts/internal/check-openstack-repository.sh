@@ -82,6 +82,7 @@ done
 for local_private_file in \
   inventory/openstack-cluster.local.yml \
   inventory/openstack-plan.local.yml \
+  inventory/ceph-osd-expansion.local.yml \
   inventory/openwrt-router.local.yml \
   terraform/openstack/terraform.tfvars \
   kolla/config/nova/nova-compute.conf \
@@ -312,6 +313,7 @@ operations_runbook_requirements = {
     "docs/operations/ceph-day2.md": (
         "osd-plan/osd-apply",
         "safe-to-destroy",
+        "osd-expand-plan",
         "완료 기준",
     ),
     "docs/operations/upgrades.md": (
@@ -351,6 +353,7 @@ local_data_text = local_data_doc.read_text()
 for required_path in (
     "inventory/openstack-cluster.local.yml",
     "inventory/openstack-plan.local.yml",
+    "inventory/ceph-osd-expansion.local.yml",
     "inventory/openwrt-router.local.yml",
     "terraform/openstack/terraform.tfvars",
     "terraform/workloads/<stack>/terraform.tfvars",
@@ -402,6 +405,100 @@ assert "getent ahostsv4" in verify_playbook
 for unit in ("iscsid.service", "iscsid.socket", "open-iscsi.service"):
     assert unit in prepare_playbook and unit in verify_playbook
 PY
+
+# Render a deterministic balanced Day-2 OSD expansion. The change must match
+# exact devices already reviewed in the topology and span three storage hosts.
+python3 - \
+  inventory/openstack-cluster.yml \
+  "$work_dir/ceph-expansion-topology.yml" \
+  "$work_dir/ceph-expansion-change.yml" \
+  "$work_dir/ceph-expansion-unbalanced.yml" <<'PY'
+import copy
+import sys
+from pathlib import Path
+
+import yaml
+
+topology = yaml.safe_load(Path(sys.argv[1]).read_text())
+change_devices = {}
+for index, name in enumerate(("cloud01", "cloud02", "cloud03"), start=1):
+    node = topology["nodes"][name]
+    node["os_disk_serial"] = f"CHECK-{name.upper()}-OS"
+    node["ceph_osd_devices"] = [
+        {
+            "by_id": f"/dev/disk/by-id/check-{name}-nvme",
+            "serial": f"CHECK-{name.upper()}-NVME",
+            "min_size_bytes": 2_000_000_000_000,
+            "device_class": "nvme",
+        },
+        {
+            "by_id": f"/dev/disk/by-id/check-{name}-ssd",
+            "serial": f"CHECK-{name.upper()}-SSD",
+            "min_size_bytes": 2_000_000_000_000,
+            "device_class": "ssd",
+        },
+    ]
+    change_devices[name] = [copy.deepcopy(node["ceph_osd_devices"][1])]
+
+change = {
+    "schema_version": 1,
+    "change_id": "add-ssd-tier-01",
+    "expected_fsid": "11111111-2222-3333-4444-555555555555",
+    "expected_current_osd_count": 3,
+    "devices": change_devices,
+}
+unbalanced = copy.deepcopy(change)
+del unbalanced["devices"]["cloud03"]
+
+Path(sys.argv[2]).write_text(yaml.safe_dump(topology, sort_keys=False))
+Path(sys.argv[3]).write_text(yaml.safe_dump(change, sort_keys=False))
+Path(sys.argv[4]).write_text(yaml.safe_dump(unbalanced, sort_keys=False))
+PY
+
+python3 scripts/internal/render-openstack-cluster.py \
+  --config "$work_dir/ceph-expansion-topology.yml" --validate-only
+python3 scripts/internal/render-ceph-osd-expansion.py \
+  --topology "$work_dir/ceph-expansion-topology.yml" \
+  --change "$work_dir/ceph-expansion-change.yml" \
+  --output-dir "$work_dir/ceph-expansion-output" >/dev/null
+python3 scripts/internal/render-ceph-osd-expansion.py \
+  --topology "$work_dir/ceph-expansion-topology.yml" \
+  --change "$work_dir/ceph-expansion-change.yml" \
+  --output-dir "$work_dir/ceph-expansion-output-repeat" >/dev/null
+cmp "$work_dir/ceph-expansion-output/manifest.txt" \
+  "$work_dir/ceph-expansion-output-repeat/manifest.txt"
+cmp "$work_dir/ceph-expansion-output/manifest.sha256" \
+  "$work_dir/ceph-expansion-output-repeat/manifest.sha256"
+python3 - "$work_dir/ceph-expansion-output" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+root = Path(sys.argv[1])
+metadata = json.loads((root / "metadata.json").read_text())
+assert metadata["expected_current_osd_count"] == 3
+assert metadata["expected_final_osd_count"] == 6
+assert metadata["device_count"] == 3
+assert metadata["device_classes"] == ["ssd"]
+assert set(metadata["hosts"]) == {"cloud01", "cloud02", "cloud03"}
+specs = list(yaml.safe_load_all((root / "ceph-osd-spec.yml").read_text()))
+assert len(specs) == 3
+assert {spec["crush_device_class"] for spec in specs} == {"ssd"}
+inventory = yaml.safe_load((root / "ansible-inventory.yml").read_text())
+assert set(inventory["all"]["hosts"]) == {"cloud01", "cloud02", "cloud03"}
+PY
+if python3 scripts/internal/render-ceph-osd-expansion.py \
+  --topology "$work_dir/ceph-expansion-topology.yml" \
+  --change "$work_dir/ceph-expansion-unbalanced.yml" \
+  --output-dir "$work_dir/ceph-expansion-unbalanced-output" \
+  >"$work_dir/ceph-expansion-unbalanced.stdout" \
+  2>"$work_dir/ceph-expansion-unbalanced.stderr"; then
+  echo 'Unbalanced two-host OSD expansion unexpectedly passed validation.' >&2
+  exit 1
+fi
+grep -q 'must be added on at least three hosts' "$work_dir/ceph-expansion-unbalanced.stderr"
 
 # Public example hardware identifiers must fail before either destructive disk
 # preparation or credential-bearing autoinstall output can be produced.
@@ -578,12 +675,21 @@ assert "Physical host expansion after Magnum/CAPI activation is not automated" i
 ceph_script = Path("scripts/ceph-cluster.sh").read_text()
 assert "require_initial_osd_deployment()" in ceph_script
 assert "ceph_cmd osd ls --format json" in ceph_script
-assert "incremental OSD expansion is not implemented" in ceph_script
+render_plan_body, ceph_shell = ceph_script.split("\nPY\n}\n", 1)
+assert "render_expansion_plan()" not in render_plan_body
+assert "render_expansion_plan()" in ceph_shell
+for command in ("osd-expand-plan", "osd-expand-apply", "osd-expand-status"):
+    assert command in ceph_script
+assert "CEPH_OSD_EXPANSION_CONFIRM" in ceph_script
 initial_osd_guard = ceph_script.split("require_initial_osd_deployment() {", 1)[1].split("\n}", 1)[0]
-assert initial_osd_guard.index("require_cluster") < initial_osd_guard.index("ceph_cmd osd ls --format json")
+assert initial_osd_guard.index("require_cluster") < initial_osd_guard.index("current_osd_count")
 assert "existing_osd_count == 0" in initial_osd_guard
+current_osd_count = ceph_script.split("current_osd_count() {", 1)[1].split("\n}", 1)[0]
+assert "ceph_cmd osd ls --format json" in current_osd_count
 osd_dry_run = ceph_script.split("osd_dry_run() {", 1)[1].split("\n}", 1)[0]
 assert osd_dry_run.index("require_initial_osd_deployment") < osd_dry_run.index("preflight_devices")
+expansion_dry_run = ceph_script.split("osd_expansion_dry_run() {", 1)[1].split("\n}", 1)[0]
+assert expansion_dry_run.index("require_stable_expansion_cluster") < expansion_dry_run.index("preflight_expansion_devices")
 ceph_transition = Path("docs/operations/ceph-initial-deployment.md").read_text()
 assert "최초 OSD 배포 전용" in ceph_transition
 assert "ceph osd ls --format json" in ceph_transition

@@ -1,0 +1,30 @@
+---
+schema_version: 1
+
+# Copy to ceph-osd-expansion.local.yml only when adding balanced OSD capacity
+# to an existing healthy cluster. Obtain the FSID and OSD count immediately
+# before planning the change:
+#   sudo cephadm shell -- ceph fsid
+#   sudo cephadm shell -- ceph osd ls --format json
+change_id: add-ssd-tier-01
+expected_fsid: REPLACE_CURRENT_CEPH_FSID
+expected_current_osd_count: 3
+
+# Every entry must also be present, exactly, in the matching node's
+# ceph_osd_devices list in inventory/openstack-cluster.local.yml.
+devices:
+  cloud01:
+    - by_id: /dev/disk/by-id/REPLACE_CLOUD01_SSD_BY_ID
+      serial: REPLACE_CLOUD01_SSD_SERIAL
+      min_size_bytes: 1800000000000
+      device_class: ssd
+  cloud02:
+    - by_id: /dev/disk/by-id/REPLACE_CLOUD02_SSD_BY_ID
+      serial: REPLACE_CLOUD02_SSD_SERIAL
+      min_size_bytes: 1800000000000
+      device_class: ssd
+  cloud03:
+    - by_id: /dev/disk/by-id/REPLACE_CLOUD03_SSD_BY_ID
+      serial: REPLACE_CLOUD03_SSD_SERIAL
+      min_size_bytes: 1800000000000
+      device_class: ssd

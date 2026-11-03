@@ -13,6 +13,13 @@ osd_spec="$cache_dir/ceph-osd-spec.yml"
 manifest="$cache_dir/ceph-osd-manifest.txt"
 digest_file="$cache_dir/ceph-osd-manifest.sha256"
 device_playbook="$repo_dir/ansible/playbooks/openstack/verify-ceph-devices.yml"
+expansion_renderer="$repo_dir/scripts/internal/render-ceph-osd-expansion.py"
+expansion_cache_dir="$repo_dir/.cache/ceph-expansion"
+expansion_metadata="$expansion_cache_dir/metadata.json"
+expansion_inventory="$expansion_cache_dir/ansible-inventory.yml"
+expansion_spec="$expansion_cache_dir/ceph-osd-spec.yml"
+expansion_manifest="$expansion_cache_dir/manifest.txt"
+expansion_digest_file="$expansion_cache_dir/manifest.sha256"
 temp_dir=
 
 if [[ -n ${OPENSTACK_CLUSTER_CONFIG:-} ]]; then
@@ -21,6 +28,14 @@ elif [[ -f $repo_dir/inventory/openstack-cluster.local.yml ]]; then
   topology=$repo_dir/inventory/openstack-cluster.local.yml
 else
   topology=$repo_dir/inventory/openstack-cluster.yml
+fi
+
+if [[ -n ${CEPH_OSD_EXPANSION_CONFIG:-} ]]; then
+  expansion_config=$CEPH_OSD_EXPANSION_CONFIG
+elif [[ -f $repo_dir/inventory/ceph-osd-expansion.local.yml ]]; then
+  expansion_config=$repo_dir/inventory/ceph-osd-expansion.local.yml
+else
+  expansion_config=$repo_dir/inventory/ceph-osd-expansion.example.yml
 fi
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -277,6 +292,14 @@ print(f"OSD plan SHA256: {digest}")
 PY
 }
 
+render_expansion_plan() {
+  validate_topology
+  "$expansion_renderer" \
+    --topology "$topology" \
+    --change "$expansion_config" \
+    --output-dir "$expansion_cache_dir"
+}
+
 validate_topology() {
   python3 "$repo_dir/scripts/internal/render-openstack-cluster.py" \
     --config "$topology" --validate-only
@@ -295,6 +318,17 @@ PY
 metadata_value() {
   local key=$1
   python3 - "$metadata" "$key" <<'PY'
+import json, sys
+value = json.load(open(sys.argv[1]))
+for key in sys.argv[2].split('.'):
+    value = value[key]
+print(value)
+PY
+}
+
+expansion_value() {
+  local key=$1
+  python3 - "$expansion_metadata" "$key" <<'PY'
 import json, sys
 value = json.load(open(sys.argv[1]))
 for key in sys.argv[2].split('.'):
@@ -335,14 +369,23 @@ find_ansible_playbook() {
   fi
 }
 
-preflight_devices() {
-  require_enabled_plan
+run_device_preflight() {
+  local inventory=$1
   local executable
   executable=$(find_ansible_playbook)
   [[ -n $executable ]] || fail 'ansible-playbook is required; run scripts/cluster.sh setup first.'
   ANSIBLE_CONFIG="$repo_dir/ansible/ansible.cfg" \
   ANSIBLE_LOCAL_TEMP=/tmp/openstack-ceph-ansible \
-    "$executable" -i "$ansible_inventory" "$device_playbook"
+    "$executable" -i "$inventory" "$device_playbook"
+}
+
+preflight_devices() {
+  require_enabled_plan
+  run_device_preflight "$ansible_inventory"
+}
+
+preflight_expansion_devices() {
+  run_device_preflight "$expansion_inventory"
 }
 
 require_root() {
@@ -365,20 +408,22 @@ require_cluster() {
 require_initial_osd_deployment() {
   require_cluster
   local existing_osd_count
-  if ! existing_osd_count=$(
-    ceph_cmd osd ls --format json |
-      python3 -c '
+  if ! existing_osd_count=$(current_osd_count); then
+    fail 'Unable to inspect the existing Ceph OSD list.'
+  fi
+  (( existing_osd_count == 0 )) || fail \
+    "Found $existing_osd_count existing Ceph OSD(s). osd-plan and osd-apply are only for the initial empty-cluster OSD deployment; use osd-expand-plan for balanced additions."
+}
+
+current_osd_count() {
+  ceph_cmd osd ls --format json |
+    python3 -c '
 import json, sys
 osds = json.load(sys.stdin)
 if not isinstance(osds, list):
     raise SystemExit("Ceph OSD list is not a JSON array")
 print(len(osds))
 '
-  ); then
-    fail 'Unable to inspect the existing Ceph OSD list.'
-  fi
-  (( existing_osd_count == 0 )) || fail \
-    "Found $existing_osd_count existing Ceph OSD(s). osd-plan and osd-apply are only for the initial empty-cluster OSD deployment; incremental OSD expansion is not implemented."
 }
 
 ceph_cmd() {
@@ -393,6 +438,30 @@ ceph_with_spec() {
   cephadm --image "$CEPH_IMAGE" shell \
     --mount "$osd_spec" -- \
     ceph orch apply -i /mnt/ceph-osd-spec.yml "$@"
+}
+
+ceph_with_expansion_spec() {
+  cephadm --image "$CEPH_IMAGE" shell \
+    --mount "$expansion_spec" -- \
+    ceph orch apply -i /mnt/ceph-osd-spec.yml "$@"
+}
+
+require_stable_expansion_cluster() {
+  require_cluster
+  local actual_fsid expected_fsid actual_count expected_count health
+  actual_fsid=$(ceph_cmd fsid)
+  expected_fsid=$(expansion_value expected_fsid)
+  [[ $actual_fsid == "$expected_fsid" ]] || \
+    fail "Ceph FSID changed: expected $expected_fsid, found $actual_fsid."
+  actual_count=$(current_osd_count) || fail 'Unable to inspect the current Ceph OSD count.'
+  expected_count=$(expansion_value expected_current_osd_count)
+  (( actual_count == expected_count )) || \
+    fail "Ceph OSD count changed: expected $expected_count, found $actual_count. Regenerate the expansion change."
+  (( actual_count > 0 )) || fail 'OSD expansion requires an existing Ceph cluster with OSDs.'
+  health=$(ceph_cmd health --format json | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("status", "UNKNOWN"))')
+  [[ $health == HEALTH_OK ]] || \
+    fail "Ceph must be HEALTH_OK before OSD expansion; current status is $health."
 }
 
 bootstrap_cluster() {
@@ -526,6 +595,66 @@ apply_osds() {
   ceph_with_spec
   ceph_cmd orch ps --daemon-type osd
   echo 'OSD specifications submitted. Wait for recovery and HEALTH_OK before configuring pools.'
+}
+
+osd_expansion_dry_run() {
+  render_expansion_plan
+  require_stable_expansion_cluster
+  preflight_expansion_devices
+  ceph_cmd orch device ls --wide --refresh
+  ceph_with_expansion_spec --dry-run
+  local change_id digest expected_count final_count
+  change_id=$(expansion_value change_id)
+  digest=$(<"$expansion_digest_file")
+  expected_count=$(expansion_value expected_current_osd_count)
+  final_count=$(expansion_value expected_final_osd_count)
+  printf '\nReviewed Day-2 OSD expansion manifest:\n'
+  cat "$expansion_manifest"
+  printf 'Change ID: %s\n' "$change_id"
+  printf 'OSD count: %s -> %s\n' "$expected_count" "$final_count"
+  printf 'Expansion SHA256: %s\n' "$digest"
+  printf "Apply guard: CEPH_OSD_EXPANSION_CONFIRM='ADD-CEPH-OSDS:%s:%s:%s' sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,CEPH_OSD_EXPANSION_CONFIG,CEPH_OSD_EXPANSION_CONFIRM %s osd-expand-apply\n" \
+    "$change_id" "$expected_count" "$digest" "$0"
+}
+
+apply_osd_expansion() {
+  osd_expansion_dry_run
+  local change_id digest expected_count expected
+  change_id=$(expansion_value change_id)
+  digest=$(<"$expansion_digest_file")
+  expected_count=$(expansion_value expected_current_osd_count)
+  expected="ADD-CEPH-OSDS:$change_id:$expected_count:$digest"
+  [[ ${CEPH_OSD_EXPANSION_CONFIRM:-} == "$expected" ]] || \
+    fail "Set CEPH_OSD_EXPANSION_CONFIRM exactly to $expected after reviewing this fresh dry-run."
+  ceph_with_expansion_spec
+  ceph_cmd orch ps --daemon-type osd
+  echo 'Expansion OSD specifications submitted. Do not create a new pool or start another change until recovery is complete and HEALTH_OK.'
+  echo "Check progress with: sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,CEPH_OSD_EXPANSION_CONFIG $0 osd-expand-status"
+}
+
+show_osd_expansion_status() {
+  render_expansion_plan
+  require_cluster
+  local actual_fsid expected_fsid actual_count expected_before expected_final health
+  actual_fsid=$(ceph_cmd fsid)
+  expected_fsid=$(expansion_value expected_fsid)
+  [[ $actual_fsid == "$expected_fsid" ]] || \
+    fail "Ceph FSID changed: expected $expected_fsid, found $actual_fsid."
+  actual_count=$(current_osd_count) || fail 'Unable to inspect the current Ceph OSD count.'
+  expected_before=$(expansion_value expected_current_osd_count)
+  expected_final=$(expansion_value expected_final_osd_count)
+  health=$(ceph_cmd health --format json | python3 -c \
+    'import json,sys; print(json.load(sys.stdin).get("status", "UNKNOWN"))')
+  printf 'Expansion OSD count: before=%s current=%s target=%s\n' \
+    "$expected_before" "$actual_count" "$expected_final"
+  printf 'Ceph health: %s\n' "$health"
+  ceph_cmd osd tree
+  ceph_cmd orch ps --daemon-type osd
+  if (( actual_count == expected_final )) && [[ $health == HEALTH_OK ]]; then
+    echo 'Expansion completion gate passed: target OSD count reached and Ceph is HEALTH_OK.'
+  else
+    echo 'Expansion is pending or requires investigation; do not start another OSD change.'
+  fi
 }
 
 up_osd_host_count() {
@@ -694,12 +823,17 @@ Usage: scripts/ceph-cluster.sh COMMAND
   status            show Ceph health, hosts, devices and daemons
   osd-plan          plan the initial empty-cluster OSD deployment only
   osd-apply         submit initial OSD specs only (SHA confirmation required)
+  osd-expand-plan   dry-run a balanced addition to an existing healthy cluster
+  osd-expand-apply  submit the exact reviewed expansion spec (SHA confirmation)
+  osd-expand-status show target/current OSD counts, health and OSD daemons
   configure-pools   create images/volumes/vms pools at size=3, min_size=2
   export-kolla      export least-privilege config/keyrings to an ignored directory
 
 This script never zaps a non-empty disk and never migrates LVM, Glance or Nova data.
-osd-plan and osd-apply stop when any OSD already exists; incremental expansion is not implemented.
+osd-plan/osd-apply remain initial-only. Expansion requires an explicit ignored change file,
+HEALTH_OK, exact FSID/current OSD count, blank-device preflight, dry-run and SHA confirmation.
 Set OPENSTACK_CLUSTER_CONFIG to select a reviewed topology file.
+Set CEPH_OSD_EXPANSION_CONFIG to select a reviewed Day-2 OSD addition file.
 HELP
     ;;
   setup)
@@ -726,6 +860,15 @@ HELP
     ;;
   osd-apply)
     apply_osds
+    ;;
+  osd-expand-plan)
+    osd_expansion_dry_run
+    ;;
+  osd-expand-apply)
+    apply_osd_expansion
+    ;;
+  osd-expand-status)
+    show_osd_expansion_status
     ;;
   configure-pools)
     configure_pools

@@ -43,6 +43,7 @@ Git clone만으로는 환경을 복구할 수 없다. 로컬 입력, credential�
 | --- | --- | --- |
 | `inventory/openstack-cluster.local.yml` | `inventory/openstack-cluster.yml` | 실제 관리 IP와 API VIP, DNS, NIC·MAC, OS 디스크 시리얼, 노드 역할, SSH 개인키 **경로**, Ceph 주소와 OSD `by-id`·시리얼 |
 | `inventory/openstack-plan.local.yml` | `inventory/openstack-plan.yml` | 실제 관리·Provider·tenant 망, Floating IP 범위, Kolla SSD와 보호 대상 디스크 시리얼 |
+| `inventory/ceph-osd-expansion.local.yml` | `inventory/ceph-osd-expansion.example.yml` | 운영 OSD 추가 change ID, Ceph FSID, 현재 OSD 수와 이번에 추가할 장치 identity |
 | `inventory/openwrt-router.local.yml` | `inventory/openwrt-router.example.yml` | OpenWrt 주소와 계정, SSH 키 **경로**, discovery에서 확인한 모델·버전·DSA bridge·포트, 실제 VLAN과 망 계획 |
 | `terraform/openstack/terraform.tfvars` | `terraform/openstack/terraform.tfvars.example` | 실제 Provider·tenant·관리망, gateway·DNS·Floating IP 범위, SSH 공개키, Kubernetes VM 주소·역할·볼륨 |
 | `terraform/workloads/<stack>/terraform.tfvars` | `terraform/workloads/_template/terraform.tfvars.example` | 서비스 VM의 OpenStack UUID, 허용 CIDR, `instances` map과 선택적 Floating IP 설정 |
@@ -51,7 +52,7 @@ Git clone만으로는 환경을 복구할 수 없다. 로컬 입력, credential�
 | `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | cloud01 HBA의 정확한 PCI 주소, vendor/product ID와 alias |
 | `kolla/config/nova.conf` | `kolla/config/nova.conf.example` | nova-api와 compute가 공유할 `storage-hba` alias |
 
-처음 네 파일은 다음처럼 기존 파일을 덮어쓰지 않고 만든다.
+기본 구축에 필요한 처음 네 파일은 다음처럼 기존 파일을 덮어쓰지 않고 만든다.
 
 ```bash
 umask 077
@@ -83,6 +84,14 @@ chmod 0600 kolla/config/nova/nova-compute.conf kolla/config/nova.conf
 
 Ceph도 동일한 3노드 `inventory/openstack-cluster.local.yml`을 사용한다. 별도의 전환
 topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-initial-deployment.md)을 따른다.
+운영 중 OSD를 실제로 추가할 때만 change 파일을 만든다.
+
+```bash
+umask 077
+cp inventory/ceph-osd-expansion.example.yml \
+  inventory/ceph-osd-expansion.local.yml
+chmod 0600 inventory/ceph-osd-expansion.local.yml
+```
 
 `openstack-cluster.local.yml`과 `openstack-plan.local.yml`의 실제 망과 디스크 역할은 서로
 일치해야 한다. `openwrt-router.local.yml`은 discovery 결과를 확인하기 전까지

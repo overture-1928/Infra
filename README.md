@@ -80,7 +80,7 @@ class를 사용한다.
 추가 2TB SATA SSD는 최초 구축 필수 장비가 아니며 현재 초기 pool 자동화에도 포함하지 않는다.
 별도 `ssd` Ceph tier가 필요할 때만 세 노드에 같은 등급과 비슷한 용량으로 한 개씩 추가하고,
 NVMe pool과 분리된 CRUSH rule, pool과 Cinder volume type을 구성한다. 장치만 추가한 상태에서
-NVMe용 `osd-apply`를 다시 실행하지 않는다.
+NVMe용 `osd-apply`를 다시 실행하지 않고 별도의 `osd-expand-plan/apply`를 사용한다.
 
 `cloud01`의 4TB·3TB HDD는 Ceph에 넣지 않는다. 3노드 OpenStack 검증이 끝난 뒤 HDD 전용
 SATA HBA를 `cloud01` 고정 스토리지 VM에 PCI 패스스루한다. 자세한 내용은
@@ -211,5 +211,7 @@ Web·Application·Database를 Neutron network와 security group으로 분리하�
 
 `cloud04` 이후는 기존 세 컨트롤러를 유지하면서 compute 노드로 한 대씩 추가할 수 있다.
 Ceph 용량을 늘릴 때는 같은 device class의 OSD를 세 장애 도메인에 균형 있게 추가해야 한다.
-현재 `osd-plan/osd-apply`는 **빈 클러스터의 최초 OSD 배포만** 자동화하므로 운영 중 OSD 증설은
-별도 검토가 필요하다. [3노드 이후 확장](docs/operations/cluster-expansion.md)을 참고한다.
+`osd-plan/osd-apply`는 **빈 클러스터의 최초 OSD 배포만** 담당한다. 운영 중 균형 OSD 추가는
+별도 change 파일과 `osd-expand-plan/apply/status`를 사용하며, OSD 교체·제거와 새 class용
+pool/Cinder type은 계속 별도 검토 대상이다. [Ceph 운영 변경](docs/operations/ceph-day2.md)과
+[3노드 이후 확장](docs/operations/cluster-expansion.md)을 참고한다.

@@ -28,12 +28,12 @@
 | --- | --- |
 | [장애 훈련](failure-drills.md) | host, OSD, Ceph network, API와 Kubernetes 장애 시험 |
 | [물리 노드 확장](cluster-expansion.md) | cloud04 이후 compute 추가와 Ceph 증설 경계 |
-| [Ceph 운영 변경](ceph-day2.md) | 운영 OSD 증설·교체와 새 device class 계획·검증 기준 |
+| [Ceph 운영 변경](ceph-day2.md) | 운영 OSD 균형 증설 자동화, 교체·제거와 새 device class 검토 기준 |
 | [업그레이드와 유지보수](upgrades.md) | Ubuntu, Ceph, Kolla, Terraform, Kubernetes 버전 변경 경계 |
 
-운영 Ceph OSD 추가·교체·제거, controller role 제거, release upgrade와 자동 state 복구는 현재
-apply 자동화 범위에 포함되지 않는다. 관련 운영 문서는 필요한 검토와 중단 기준을 제공하지만
-기존 guard를 우회하지 않는다. [자동화 경계](../architecture/automation-boundaries.md)에서 차단
-범위를 먼저 확인한다.
+운영 Ceph OSD 추가는 명시적인 change 파일과 plan/apply/status guard로 지원한다. OSD 교체·제거,
+새 class의 pool/Cinder backend, controller role 제거, release upgrade와 자동 state 복구는 현재
+apply 자동화 범위에 포함되지 않는다. [자동화 경계](../architecture/automation-boundaries.md)에서
+차단 범위를 먼저 확인한다.
 
 [전체 문서로 돌아가기](../README.md)

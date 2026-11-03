@@ -66,7 +66,8 @@ sudo ./scripts/cluster.sh verify-openstack
 | VM guest 서비스 구성 | workload inventory/configure | 지원 |
 | workload state 유실 | 백업 복원 또는 명시적 import | 자동 복구하지 않음 |
 | cloud04 이후 compute 추가 | `expand-openstack` | 조건부 지원 |
-| 기존 Ceph에 OSD 추가·교체 | Ceph day-2 변경 계획과 버전별 명령 검토 | apply 자동화 미지원 |
+| 기존 Ceph에 OSD 균형 추가 | `osd-expand-plan/apply/status` | 적용 코드 구현, 실환경 미검증 |
+| Ceph OSD 교체·제거 | Ceph day-2 identity·safe-to-destroy 검토 | apply 자동화 미지원 |
 | management Kubernetes 노드 추가 | Terraform 변경 후 Kubespray scale | 추가 지원, 제거 차단 |
 | management Node/PVC/LoadBalancer 문제 | Kubernetes와 OpenStack desired state 비교 | 읽기 중심 진단 지원 |
 | HBA/HDD VM 생성 | cloud01 전용 workload | 조건부 지원 |
@@ -365,8 +366,9 @@ Ceph network, API와 management control plane별 예상 결과와 중단 기준�
 최초 구축용 `osd-plan/osd-apply`를 다시 실행하지 않는다. 현재 health, pool/CRUSH rule, 정확한
 by-id/serial, host별 raw 용량, recovery 영향과 최근 backup을 변경 기록에 먼저 고정한다.
 
-운영 OSD apply는 아직 wrapper에 구현돼 있지 않다. 기존 class의 균형 증설, 새 SSD/HDD class,
-장애 OSD identity 확인과 완료 기준은 [Ceph 운영 변경](ceph-day2.md)을 따른다.
+기존 class 또는 새 class의 **균형 OSD 추가**는 `ceph-osd-expansion.local.yml`과
+`osd-expand-plan/apply/status`를 사용한다. 새 SSD/HDD class용 pool과 Cinder type, 장애 OSD 교체·
+제거, identity 확인과 완료 기준은 [Ceph 운영 변경](ceph-day2.md)을 따른다.
 
 ## 버전을 올리려는 경우
 
@@ -386,7 +388,7 @@ cloud에 바로 덮어쓰지 않는다. 자세한 순서는 [홈랩 보안](secu
 다음 상황에서는 기존 명령을 변형해 실행하지 않고 별도 변경 계획과 rollback 절차를 먼저
 작성한다.
 
-- 운영 Ceph OSD 추가·교체·제거와 CRUSH/pool 정책 변경
+- 운영 Ceph OSD 교체·제거와 CRUSH/pool 정책 변경
 - controller/network role 제거 또는 quorum 재구성
 - management Kubernetes 노드·role 제거
 - Terraform state 자동 재구성과 기존 자원 자동 import

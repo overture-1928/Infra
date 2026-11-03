@@ -17,6 +17,11 @@
 `internal/`은 위 진입점이 호출하는 렌더러, 도구 설치기와 하위 실행기다. 런북에서
 별도로 지시하지 않는 한 직접 실행하지 않는다.
 
+Ceph의 최초 OSD는 `ceph-cluster.sh osd-plan/osd-apply`, 운영 중 균형 증설은
+`osd-expand-plan/osd-expand-apply/osd-expand-status`로 분리한다. 증설 명령은
+`inventory/ceph-osd-expansion.local.yml`의 FSID, 기존 OSD 수와 장치 manifest를 고정하며
+교체·제거 또는 새 Cinder backend를 수행하지 않는다.
+
 일반 VM은 `cluster.sh workload-new/plan/show/apply`로 관리하고, guest 구성은
 `cluster.sh workload-inventory/configure`로 실행한다. 상황별 명령 선택은
 [상황별 운영 가이드](../docs/operations/scenarios.md)를 따른다.

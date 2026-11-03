@@ -13,6 +13,7 @@
 | 영역 | 현재 상태 | 자동화가 수행하는 범위 | 아직 확인하거나 구현할 범위 |
 | --- | --- | --- | --- |
 | 3노드 OpenStack + Ceph 신규 구축 | 적용 코드 구현, 실환경 미검증 | topology 검증, Ceph bootstrap/OSD/pool, Kolla 배포와 서비스 검사 | 실제 세 장비에서 설치·장애·복원 시험 |
+| Ceph 운영 OSD 균형 증설 | 적용 코드 구현, 실환경 미검증 | change 파일, FSID/OSD count/HEALTH_OK 검증, blank-device preflight, cephadm dry-run, digest apply와 상태 확인 | 실제 장비 증설 시험, 새 class pool/Cinder backend, 교체·제거 |
 | 네트워크 계획과 복구 guard | 적용 코드 구현, 실환경 미검증 | OpenWrt discovery/plan/apply, 확인 probe, rollback transaction, Netplan 렌더링 | 실제 router·switch·NIC에서 VLAN과 rollback 시험 |
 | Terraform VM + Kubespray | 적용 코드 구현, 실환경 미검증 | 저장된 tfplan으로 management VM 생성, inventory 렌더링, Kubernetes 설치·추가 노드 scale | 실제 OpenStack에서 최초 설치와 노드 장애·복구 시험 |
 | Masakari VM 복구 | Instance Monitor 적용 코드 구현, 실환경 미검증 | API·Engine·Instance Monitor 배포, HA metadata 제한, API 상태 검사 | 물리 fencing, Host Monitor, failover segment와 host evacuation 시험 |
@@ -33,7 +34,7 @@ flowchart LR
   REVIEW -->|불일치| FIX["입력 수정 후 plan 재생성"]
   FIX --> VALIDATE
 
-  APPLY -. 차단 .-> BLOCKED["운영 OSD 제거·증설<br/>노드 제거·state 자동복구<br/>PCI VM 이동"]
+  APPLY -. 차단 .-> BLOCKED["운영 OSD 교체·제거<br/>노드 제거·state 자동복구<br/>PCI VM 이동"]
 ```
 
 | 단계 | 자동화 | 변경 범위 | 승인값 |
@@ -44,6 +45,7 @@ flowchart LR
 | Ceph bootstrap | MON/MGR cluster 생성 | `/etc/ceph`, cephadm 상태 | `BOOTSTRAP-CEPH:...` |
 | Ceph host | MON/MGR host 등록 | 세 Ceph host | `ADD-CEPH-HOSTS:...` |
 | Ceph OSD | 빈 디스크 세 개 OSD 생성 | manifest의 by-id만 | `WIPE-CEPH-OSDS:<sha>` |
+| Ceph OSD 증설 | 운영 cluster에 균형 OSD 추가 | change 파일의 by-id만 | `ADD-CEPH-OSDS:<change>:<count>:<sha>` |
 | Ceph pool | RBD pool과 CRUSH rule | `images`, `volumes`, `vms` | `CONFIGURE-CEPH-POOLS:...` |
 | Kolla client | 최소권한 Ceph keyring | ignored generated config | `EXPORT-KOLLA-CEPH-CLIENTS` |
 | OpenStack | fresh multinode deploy | 세 host의 Kolla container | root 실행과 사전조건 |
@@ -68,19 +70,21 @@ Autoinstall은 topology의 노드별 `os_disk_serial`을 사용한다. 같은 se
 
 ## Ceph
 
-Ceph 자동화는 세 host와 빈 cluster의 최초 OSD 배포까지만 담당한다. 다음은 자동화 범위 밖이다.
+Ceph 자동화는 세 host의 최초 OSD 배포와 운영 cluster의 균형 OSD 추가를 담당한다. 다음은
+자동화 범위 밖이다.
 
-- 운영 cluster의 OSD 추가·교체·제거
+- 운영 cluster의 OSD 교체·제거
 - SATA SSD/HDD class용 추가 pool과 Cinder type
 - pool size나 CRUSH failure domain 변경
 - 손실된 OSD의 강제 purge
 - 재구축 또는 disaster recovery
 
-운영 OSD 변경을 검토할 때는 guard를 제거하지 않고
+운영 OSD 추가는 `osd-expand-plan/apply/status`를 사용한다. 교체·제거를 검토할 때는 guard를
+제거하지 않고
 [Ceph 운영 변경](../operations/ceph-day2.md)의 identity, backup, recovery와 완료 기준을 따른다.
 
-`osd-plan`과 `osd-apply`는 기존 OSD가 하나라도 있으면 중단한다. OSD를 새로 추가할 때 이
-guard를 제거하지 말고 별도 증설 workflow를 만든다.
+`osd-plan`과 `osd-apply`는 기존 OSD가 하나라도 있으면 중단한다. OSD를 추가할 때 이 guard를
+제거하거나 최초 spec을 재사용하지 않는다.
 
 ## OpenStack
 
