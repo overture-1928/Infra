@@ -1,9 +1,11 @@
 # Ubuntu Server에서 시작하는 OpenStack 클러스터
 
 이 저장소는 물리 서버 `cloud01` 한 대에 Ubuntu Server 24.04와 Kolla-Ansible OpenStack을
-설치하고, 나중에 `cloud02`, `cloud03`을 함께 추가해 3노드 제어·네트워크·컴퓨트 클러스터로
-확장하는 자동화를 제공한다. OpenStack 위의 Kubernetes 인프라는 Terraform으로 만들고
-Kubespray로 설치한다.
+설치하고, `cloud02`, `cloud03`으로 3노드 정족수를 만든 뒤 `cloud04` 이후를 추가해
+5노드·7노드 등으로 확장하는 자동화를 제공한다. 5노드나 7노드에서도
+`cloud01`∼`cloud03`의 control·network 역할을 유지하고 나머지 노드를 compute와 선택적인
+Ceph OSD 용도로 추가하는 배치를 권장한다. OpenStack 위의 Kubernetes 인프라는
+Terraform으로 만들고 Kubespray로 설치한다.
 
 ```text
 Ubuntu Server 설치
@@ -94,7 +96,7 @@ Kubernetes API VIP는 확장 후에도 같은 주소를 쓰기 위해 처음부�
 호스트 준비 자동화는 최소 8 CPU 스레드와 32GB RAM을 요구한다. 한 서버에서 OpenStack과
 Kubernetes VM을 함께 운영하려면 64GB 이상을 권장한다.
 
-## 3노드 확장 구성
+## 3노드 이상 확장 구성
 
 `cloud02`와 `cloud03`을 함께 활성화하면 다음 역할을 렌더링한다.
 
@@ -109,6 +111,8 @@ Kubernetes VM을 함께 운영하려면 64GB 이상을 권장한다.
 세 컨트롤러에 MariaDB, RabbitMQ와 API 서비스가 배치되고 Nova가 세 컴퓨트 노드를 하나의
 자원 풀로 관리한다. `scripts/cluster.sh expand-openstack`이 데이터베이스 백업, Kolla 사실
 수집, 호스트 bootstrap, deploy, 설정 검증과 서비스 검사를 순서대로 실행한다.
+추가 물리 노드 수와 controller 수는 독립적이며, 5노드·7노드에서도 controller를
+세 대로 유지할 수 있다.
 
 LVM을 사용하는 동안 Cinder 볼륨과 기본 Glance 파일 데이터는 `cloud01`에 남는다. 이 단계는
 제어·네트워크·컴퓨트 계층을 확장하지만 데이터 HA를 제공하지 않는다. 완전한 스토리지 HA는
@@ -118,7 +122,7 @@ Ceph의 같은 디스크 종류는 동일 모델이 아니라 `hdd`, `ssd`, `nvm
 OpenStack 풀에 선택한 class는 세 OSD 호스트에 모두 있어야 하며, 자동화는 그 class만 쓰는
 host failure-domain CRUSH rule에 `images`, `volumes`, `vms` 풀을 고정한다.
 
-구체적인 노드 추가 절차는 [3노드 확장 문서](docs/three-node-expansion.md), 자동화가 실행하는
+구체적인 노드 추가 절차는 [3노드 이상 확장 문서](docs/three-node-expansion.md), 자동화가 실행하는
 범위와 확인 문자열은 [자동화 안전 경계](docs/automation-boundaries.md)에 있다.
 
 ## 단계별 플랫폼 목표

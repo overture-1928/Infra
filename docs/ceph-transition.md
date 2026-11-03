@@ -126,6 +126,12 @@ sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG \
 
 ## OSD dry-run과 적용 확인
 
+`osd-plan`과 `osd-apply`는 OSD가 하나도 없는 Ceph 클러스터의 **최초 OSD 배포 전용**이다.
+두 명령은 먼저 `ceph osd ls --format json` 결과를 검사하며 기존 OSD가 하나라도 있으면 장치
+preflight 전에 중단한다. 운영 중인 Ceph에 새 호스트나 OSD만 추가하는 증설 workflow는 아직
+구현되지 않았으므로 이 명령을 반복 실행하지 않는다. 기존 OSD를 지워서 guard를 우회하지 말고
+별도로 검토한 cephadm 증설 절차를 사용해야 한다.
+
 `osd-plan`은 장치 preflight를 다시 수행한 직후 cephadm dry-run을 실행한다. 출력의 호스트와
 장치 경로가 topology와 정확히 일치하는지 확인한다.
 

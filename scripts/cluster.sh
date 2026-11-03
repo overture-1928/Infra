@@ -64,7 +64,11 @@ ansible_playbook() {
 }
 
 reject_generic_managed_deploy() {
+  local operation=$1
   if [[ $(plan_value platform.magnum_capi.enabled) == True ]]; then
+    if [[ $operation == expand ]]; then
+      fail 'Physical host expansion after Magnum/CAPI activation is not automated; add hosts before enabling the managed platform or use a separately reviewed Kolla expansion workflow.'
+    fi
     fail 'Managed platform profile is enabled; use platform-apply or platform-reconfigure so CAPI and the Magnum kubeconfig are prepared first.'
   fi
 }
@@ -85,6 +89,8 @@ for key in sys.argv[2].split('.'):
     value = value[key]
 if isinstance(value, list):
     print(",".join(value))
+elif isinstance(value, dict):
+    print(",".join(sorted(value)))
 else:
     print(value)
 PY
@@ -98,7 +104,7 @@ verify_hosts() {
 deploy_openstack() {
   require_root
   render_all
-  reject_generic_managed_deploy
+  reject_generic_managed_deploy initial
   ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
   "$repo_dir/scripts/openstack.sh" bootstrap --inventory "$kolla_inventory"
   "$repo_dir/scripts/openstack.sh" gather-facts --inventory "$kolla_inventory"
@@ -179,11 +185,11 @@ HELP
   expand-openstack)
     require_root
     render_all
-    reject_generic_managed_deploy
+    reject_generic_managed_deploy expand
     node_count=$(plan_value node_count)
     (( node_count >= 3 )) || fail 'Expansion requires at least three enabled nodes.'
-    controllers=$(plan_value roles.control)
-    expected="EXPAND-OPENSTACK:${controllers}"
+    enabled_hosts=$(plan_value nodes)
+    expected="EXPAND-OPENSTACK:${enabled_hosts}"
     [[ ${OPENSTACK_EXPAND_CONFIRM:-} == "$expected" ]] || \
       fail "Set OPENSTACK_EXPAND_CONFIRM='$expected' after reviewing the rendered inventories."
     ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"

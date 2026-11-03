@@ -363,6 +363,21 @@ cluster_script = Path("scripts/cluster.sh").read_text()
 assert 'terraform_bin="$repo_dir/.cache/terraform/bin/terraform"' in cluster_script
 assert "init -input=false -lockfile=readonly" in cluster_script
 assert "scripts/setup-terraform.sh" in cluster_script
+assert "enabled_hosts=$(plan_value nodes)" in cluster_script
+assert 'expected="EXPAND-OPENSTACK:${enabled_hosts}"' in cluster_script
+assert "Physical host expansion after Magnum/CAPI activation is not automated" in cluster_script
+ceph_script = Path("scripts/ceph-cluster.sh").read_text()
+assert "require_initial_osd_deployment()" in ceph_script
+assert "ceph_cmd osd ls --format json" in ceph_script
+assert "incremental OSD expansion is not implemented" in ceph_script
+initial_osd_guard = ceph_script.split("require_initial_osd_deployment() {", 1)[1].split("\n}", 1)[0]
+assert initial_osd_guard.index("require_cluster") < initial_osd_guard.index("ceph_cmd osd ls --format json")
+assert "existing_osd_count == 0" in initial_osd_guard
+osd_dry_run = ceph_script.split("osd_dry_run() {", 1)[1].split("\n}", 1)[0]
+assert osd_dry_run.index("require_initial_osd_deployment") < osd_dry_run.index("preflight_devices")
+ceph_transition = Path("docs/ceph-transition.md").read_text()
+assert "최초 OSD 배포 전용" in ceph_transition
+assert "ceph osd ls --format json" in ceph_transition
 terraform_main = Path("terraform/openstack/main.tf").read_text()
 assert "external_fixed_ip" in terraform_main and "local.router_external_ip" in terraform_main
 assert terraform_main.count('allocation_pool {') == 3
@@ -428,7 +443,9 @@ python3 - \
   "$work_dir/one-node-platform.yml" \
   "$work_dir/zun-provider.yml" \
   "$work_dir/three-node-platform.yml" \
-  "$work_dir/container-service-enabled.yml" <<'PY'
+  "$work_dir/container-service-enabled.yml" \
+  "$work_dir/five-node.yml" \
+  "$work_dir/seven-node.yml" <<'PY'
 import copy
 import sys
 from pathlib import Path
@@ -484,6 +501,34 @@ Path(sys.argv[6]).write_text(yaml.safe_dump(platform, sort_keys=False))
 container_service = copy.deepcopy(source)
 container_service["cluster"]["platform"]["container_service"]["enabled"] = True
 Path(sys.argv[7]).write_text(yaml.safe_dump(container_service, sort_keys=False))
+
+seven = copy.deepcopy(three)
+for index in range(4, 8):
+    name = f"cloud{index:02d}"
+    address = f"192.0.2.{index + 2}"
+    seven["nodes"][name] = {
+        "enabled": True,
+        "connection": "ssh",
+        "ansible_host": address,
+        "ansible_user": "operator",
+        "management_interface": "mgmt0",
+        "management_mac": f"02:00:00:00:00:{index:02x}",
+        "management_address": f"{address}/24",
+        "management_gateway": "192.0.2.1",
+        "management_dns": ["192.0.2.1"],
+        "neutron_external_interface": "mgmt0.10",
+        "neutron_external_vlan_id": 10,
+        "os_disk_serial": f"CHECK-CLOUD{index:02d}-OS",
+        "require_docker_mount": True,
+        "roles": ["compute"],
+        "ceph_address": address,
+        "ceph_osd_devices": [],
+    }
+five = copy.deepcopy(seven)
+five["nodes"]["cloud06"]["enabled"] = False
+five["nodes"]["cloud07"]["enabled"] = False
+Path(sys.argv[8]).write_text(yaml.safe_dump(five, sort_keys=False))
+Path(sys.argv[9]).write_text(yaml.safe_dump(seven, sort_keys=False))
 PY
 
 python3 "$topology_repo/scripts/render-openstack-cluster.py" \
@@ -524,6 +569,12 @@ if python3 scripts/render-openstack-cluster.py \
 fi
 grep -q 'container_service.enabled=true is not implemented' \
   "$work_dir/container-service.stderr"
+
+for scale in five seven; do
+  python3 scripts/render-openstack-cluster.py \
+    --config "$work_dir/${scale}-node.yml" \
+    --validate-only >/dev/null
+done
 
 mkdir -p "$work_dir/platform-output"
 python3 "$topology_repo/scripts/render-openstack-cluster.py" \
@@ -603,6 +654,55 @@ globals_data = yaml.safe_load(Path(sys.argv[4]).read_text())
 assert globals_data["kolla_internal_vip_address"] == "192.0.2.10"
 plan = json.loads(Path(sys.argv[5]).read_text())
 assert plan["node_count"] == 3
+assert plan["roles"]["storage"] == ["cloud01"]
+PY
+
+# Keep 5/7-node physical scaling generic: three controller/network nodes and
+# additional compute nodes must render through both topology and Kolla layers.
+mkdir -p "$work_dir/seven-node-output"
+python3 "$topology_repo/scripts/render-openstack-cluster.py" \
+  --config "$work_dir/seven-node.yml" \
+  --output-dir "$work_dir/seven-node-output" >/dev/null
+bash "$topology_repo/scripts/render-kolla-multinode.sh" >/dev/null
+python3 - \
+  "$work_dir/seven-node-output/ansible-inventory.yml" \
+  "$topology_repo/kolla/generated/multinode" \
+  "$work_dir/seven-node-output/cluster-plan.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+
+inventory = yaml.safe_load(Path(sys.argv[1]).read_text())["all"]
+all_hosts = {f"cloud{index:02d}" for index in range(1, 8)}
+core_hosts = {"cloud01", "cloud02", "cloud03"}
+assert set(inventory["hosts"]) == all_hosts
+assert set(inventory["children"]["control"]["hosts"]) == core_hosts
+assert set(inventory["children"]["network"]["hosts"]) == core_hosts
+assert set(inventory["children"]["compute"]["hosts"]) == all_hosts
+
+def group_hosts(lines, group):
+    members = []
+    in_group = False
+    for line in lines:
+        if line.strip() == f"[{group}]":
+            in_group = True
+            continue
+        if in_group and line.startswith("["):
+            break
+        if in_group and line.strip() and not line.lstrip().startswith("#"):
+            members.append(line.split()[0])
+    return members
+
+kolla_lines = Path(sys.argv[2]).read_text().splitlines()
+assert set(group_hosts(kolla_lines, "control")) == core_hosts
+assert set(group_hosts(kolla_lines, "network")) == core_hosts
+assert set(group_hosts(kolla_lines, "compute")) == all_hosts
+plan = json.loads(Path(sys.argv[3]).read_text())
+assert plan["node_count"] == 7
+assert set(plan["nodes"]) == all_hosts
 assert plan["roles"]["storage"] == ["cloud01"]
 PY
 

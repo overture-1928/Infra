@@ -90,16 +90,25 @@ manifest 내용이 바뀌면 SHA-256과 확인 문자열도 바뀐다. preflight
 LVM, 서명, mount, swap 또는 holder가 있는 장치를 거부한다. `osd-apply`는 이 검사를 다시
 통과한 빈 전체 디스크만 Ceph OSD로 소비한다.
 
+현재 OSD workflow는 빈 디스크로 시작하는 최초 Ceph 구성용이다. 이미 BlueStore OSD로 사용
+중인 장치를 topology에 둔 채 새 OSD를 추가하면 기존 장치도 빈 디스크 preflight 대상이 되어
+중단된다. 기존 3노드 Ceph에 5·7번째 노드의 OSD만 증설하는 add-only workflow는 아직 구현되지
+않았으므로 `osd-apply`를 반복 실행하지 않는다.
+
 ## 제어 계층을 바꾸는 경계
 
-### OpenStack 1노드에서 3노드로 확장
+### OpenStack 1노드에서 3노드 이상으로 확장
 
-`expand-openstack`은 세 컨트롤러의 정확한 목록을 요구한다.
+`expand-openstack`은 렌더링된 모든 활성 물리 노드의 정확한 목록을 요구한다. 다음은 최초
+3노드 확장의 예다.
 
 ```bash
 export OPENSTACK_EXPAND_CONFIRM='EXPAND-OPENSTACK:cloud01,cloud02,cloud03'
 sudo --preserve-env=OPENSTACK_EXPAND_CONFIRM ./scripts/cluster.sh expand-openstack
 ```
+
+5노드라면 확인값은 `EXPAND-OPENSTACK:cloud01,cloud02,cloud03,cloud04,cloud05`가 된다.
+컨트롤러 3대를 그대로 두고 compute 노드만 추가해도 확인 문자열이 바뀐다.
 
 명령은 MariaDB 전체 백업 후 Kolla bootstrap과 deploy를 실행한다. bootstrap 과정에서 Docker
 엔진과 컨테이너가 다시 시작될 수 있으므로 유지보수 시간에 수행한다. 백업을 외부 저장소로
@@ -109,6 +118,11 @@ sudo --preserve-env=OPENSTACK_EXPAND_CONFIRM ./scripts/cluster.sh expand-opensta
 `bootstrap-servers`, `gather-facts`는 Kolla 사실 수집, `deploy`는 prechecks·pull·deploy·
 post-deploy를 실행한다. `reconfigure`는 검토된 설정 변경용이며 새 물리 호스트 편입을
 대신하지 않는다. `cluster.sh expand-openstack`은 이 순서를 전체 렌더링 인벤토리에 적용한다.
+
+`cluster.platform.magnum_capi.enabled: true`인 운영 클라우드에서는 일반
+`expand-openstack`을 차단한다. `platform-reconfigure`도 새 호스트 bootstrap을 대신하지 않으므로
+Magnum/CAPI 활성화 이후의 물리 노드 편입은 현재 자동화 범위 밖이다. 가능하면 목표 5·7노드를
+먼저 OpenStack에 편입하고 Ceph와 관리형 플랫폼을 활성화한다.
 
 저장소에는 Kolla destroy 명령을 제공하지 않는다. 노드 제거, 컨트롤러 축소와 기존
 인벤토리 호스트 이름 변경도 자동화하지 않는다.

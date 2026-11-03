@@ -377,6 +377,25 @@ require_cluster() {
   ceph_cmd status --format json >/dev/null
 }
 
+require_initial_osd_deployment() {
+  require_cluster
+  local existing_osd_count
+  if ! existing_osd_count=$(
+    ceph_cmd osd ls --format json |
+      python3 -c '
+import json, sys
+osds = json.load(sys.stdin)
+if not isinstance(osds, list):
+    raise SystemExit("Ceph OSD list is not a JSON array")
+print(len(osds))
+'
+  ); then
+    fail 'Unable to inspect the existing Ceph OSD list.'
+  fi
+  (( existing_osd_count == 0 )) || fail \
+    "Found $existing_osd_count existing Ceph OSD(s). osd-plan and osd-apply are only for the initial empty-cluster OSD deployment; incremental OSD expansion is not implemented."
+}
+
 ceph_cmd() {
   cephadm --image "$CEPH_IMAGE" shell -- ceph "$@"
 }
@@ -499,8 +518,8 @@ show_status() {
 }
 
 osd_dry_run() {
+  require_initial_osd_deployment
   preflight_devices
-  require_cluster
   ceph_cmd orch device ls --wide --refresh
   ceph_with_spec --dry-run
   local digest
@@ -688,12 +707,13 @@ Usage: scripts/ceph-cluster.sh COMMAND
   bootstrap         bootstrap cephadm on cloud01 (confirmation required)
   add-hosts         add all topology hosts and place MON/MGR (confirmation required)
   status            show Ceph health, hosts, devices and daemons
-  osd-plan          run device preflight and cephadm OSD dry-run
-  osd-apply         repeat dry-run and submit OSD specs (SHA confirmation required)
+  osd-plan          plan the initial empty-cluster OSD deployment only
+  osd-apply         submit initial OSD specs only (SHA confirmation required)
   configure-pools   create images/volumes/vms pools at size=3, min_size=2
   export-kolla      export least-privilege config/keyrings to an ignored directory
 
 This script never zaps a non-empty disk and never migrates LVM, Glance or Nova data.
+osd-plan and osd-apply stop when any OSD already exists; incremental expansion is not implemented.
 Set OPENSTACK_CLUSTER_CONFIG to select a reviewed topology file.
 HELP
     ;;
