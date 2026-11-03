@@ -293,7 +293,7 @@ PY
 }
 
 validate_topology() {
-  python3 "$repo_dir/scripts/render-openstack-cluster.py" \
+  python3 "$repo_dir/scripts/internal/render-openstack-cluster.py" \
     --config "$topology" --validate-only
 }
 
@@ -718,7 +718,7 @@ Set OPENSTACK_CLUSTER_CONFIG to select a reviewed topology file.
 HELP
     ;;
   setup)
-    "$repo_dir/scripts/setup-cephadm.sh"
+    "$repo_dir/scripts/internal/setup-cephadm.sh"
     ;;
   validate)
     validate_topology

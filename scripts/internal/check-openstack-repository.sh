@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 cd "$repo_dir"
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/openstack-repository-check.XXXXXX")
@@ -30,7 +30,7 @@ find_optional_executable() {
   return 1
 }
 
-mapfile -d '' shell_files < <(find scripts -maxdepth 1 -type f -name '*.sh' -print0 | sort -z)
+mapfile -d '' shell_files < <(find scripts -maxdepth 2 -type f -name '*.sh' -print0 | sort -z)
 (( ${#shell_files[@]} > 0 )) || { echo 'No shell scripts found.' >&2; exit 1; }
 for file in "${shell_files[@]}"; do
   [[ -x $file ]] || { echo "Script is not executable: $file" >&2; exit 1; }
@@ -108,7 +108,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   }
 fi
 
-mapfile -d '' python_files < <(find scripts -maxdepth 1 -type f -name '*.py' -print0 | sort -z)
+mapfile -d '' python_files < <(find scripts -maxdepth 2 -type f -name '*.py' -print0 | sort -z)
 (( ${#python_files[@]} > 0 )) || { echo 'No Python scripts found.' >&2; exit 1; }
 PYTHONPYCACHEPREFIX="$work_dir/pycache" python3 -m py_compile "${python_files[@]}"
 
@@ -242,7 +242,7 @@ for variable in (
         f"terraform.tfvars.example omits local override {variable}"
     )
 
-platform_services = Path("scripts/platform-services.sh").read_text()
+platform_services = Path("scripts/internal/platform-services.sh").read_text()
 assert 'secret_file="$platform_cache/magnum-token-secret.json"' not in platform_services
 assert 'cluster_file="$platform_cache/management-cluster.json"' not in platform_services
 assert 'mktemp "$platform_cache/magnum-token-secret.XXXXXX"' in platform_services
@@ -413,7 +413,7 @@ assert k8s["kube_vip_arp_enabled"] is True
 cluster_script = Path("scripts/cluster.sh").read_text()
 assert 'terraform_bin="$repo_dir/.cache/terraform/bin/terraform"' in cluster_script
 assert "init -input=false -lockfile=readonly" in cluster_script
-assert "scripts/setup-terraform.sh" in cluster_script
+assert "scripts/internal/setup-terraform.sh" in cluster_script
 assert "enabled_hosts=$(plan_value nodes)" in cluster_script
 assert 'expected="EXPAND-OPENSTACK:${enabled_hosts}"' in cluster_script
 assert "Physical host expansion after Magnum/CAPI activation is not automated" in cluster_script
@@ -460,7 +460,7 @@ workload_example = Path("terraform/workloads/_template/terraform.tfvars.example"
 assert re.search(r"(?m)^enable_instances\s*=\s*false$", workload_example)
 for variable in ("network_id", "subnet_id", "image_id", "flavor_id", "instances"):
     assert re.search(rf"(?m)^\s*{variable}\s*=", workload_example), variable
-workload_script = Path("scripts/terraform-workload.sh").read_text()
+workload_script = Path("scripts/internal/terraform-workload.sh").read_text()
 for command in ("new", "plan", "show", "apply", "output"):
     assert re.search(rf"(?m)^\s*{command}\)$", workload_script), command
 assert "APPLY-TERRAFORM-WORKLOAD:$stack:$digest" in workload_script
@@ -476,7 +476,7 @@ assert "docs/terraform-workloads.md" in Path("README.md").read_text()
 PY
 
 # Validate the checked-in fresh three-node topology without writing generated files.
-python3 scripts/render-openstack-cluster.py \
+python3 scripts/internal/render-openstack-cluster.py \
   --config inventory/openstack-cluster.yml \
   --validate-only >/dev/null
 
@@ -484,14 +484,14 @@ python3 scripts/render-openstack-cluster.py \
 # overwrites reviewed or generated files in the working tree.
 topology_repo="$work_dir/topology-repo"
 mkdir -p \
-  "$topology_repo/scripts" \
+  "$topology_repo/scripts/internal" \
   "$topology_repo/kolla/inventory" \
   "$topology_repo/kolla/generated" \
   "$topology_repo/.cache/kolla-venv/bin" \
   "$topology_repo/.cache/kolla-venv/share/kolla-ansible/ansible/inventory" \
   "$work_dir/topology-output"
-cp scripts/render-openstack-cluster.py "$topology_repo/scripts/"
-cp scripts/render-kolla-multinode.sh "$topology_repo/scripts/"
+cp scripts/internal/render-openstack-cluster.py "$topology_repo/scripts/internal/"
+cp scripts/internal/render-kolla-multinode.sh "$topology_repo/scripts/internal/"
 cp kolla/globals.yml "$topology_repo/kolla/"
 ln -s "$(command -v python3)" "$topology_repo/.cache/kolla-venv/bin/python"
 cat >"$topology_repo/.cache/kolla-venv/share/kolla-ansible/ansible/inventory/multinode" <<'INI'
@@ -624,12 +624,12 @@ Path(sys.argv[8]).write_text(yaml.safe_dump(five, sort_keys=False))
 Path(sys.argv[9]).write_text(yaml.safe_dump(seven, sort_keys=False))
 PY
 
-python3 "$topology_repo/scripts/render-openstack-cluster.py" \
+python3 "$topology_repo/scripts/internal/render-openstack-cluster.py" \
   --config "$work_dir/three-node.yml" \
   --output-dir "$work_dir/topology-output" >/dev/null
-bash "$topology_repo/scripts/render-kolla-multinode.sh" >/dev/null
+bash "$topology_repo/scripts/internal/render-kolla-multinode.sh" >/dev/null
 
-if python3 scripts/render-openstack-cluster.py \
+if python3 scripts/internal/render-openstack-cluster.py \
   --config "$work_dir/two-node.yml" \
   --validate-only >"$work_dir/two-node.stdout" 2>"$work_dir/two-node.stderr"; then
   echo 'Two-node topology unexpectedly passed quorum validation.' >&2
@@ -637,7 +637,7 @@ if python3 scripts/render-openstack-cluster.py \
 fi
 grep -q 'first supported deployment requires at least three enabled nodes' "$work_dir/two-node.stderr"
 
-if python3 scripts/render-openstack-cluster.py \
+if python3 scripts/internal/render-openstack-cluster.py \
   --config "$work_dir/one-node-platform.yml" \
   --validate-only >"$work_dir/one-platform.stdout" 2>"$work_dir/one-platform.stderr"; then
   echo 'One-node managed platform unexpectedly passed validation.' >&2
@@ -646,7 +646,7 @@ fi
 grep -q 'first supported deployment requires at least three enabled nodes' \
   "$work_dir/one-platform.stderr"
 
-if python3 scripts/render-openstack-cluster.py \
+if python3 scripts/internal/render-openstack-cluster.py \
   --config "$work_dir/zun-provider.yml" \
   --validate-only >"$work_dir/zun.stdout" 2>"$work_dir/zun.stderr"; then
   echo 'Unsupported Zun provider unexpectedly passed validation.' >&2
@@ -654,7 +654,7 @@ if python3 scripts/render-openstack-cluster.py \
 fi
 grep -q 'Zun is unsupported by Kolla-Ansible 2026.2' "$work_dir/zun.stderr"
 
-if python3 scripts/render-openstack-cluster.py \
+if python3 scripts/internal/render-openstack-cluster.py \
   --config "$work_dir/container-service-enabled.yml" \
   --validate-only >"$work_dir/container-service.stdout" 2>"$work_dir/container-service.stderr"; then
   echo 'Unimplemented container service unexpectedly passed validation.' >&2
@@ -664,13 +664,13 @@ grep -q 'container_service.enabled=true is not implemented' \
   "$work_dir/container-service.stderr"
 
 for scale in five seven; do
-  python3 scripts/render-openstack-cluster.py \
+  python3 scripts/internal/render-openstack-cluster.py \
     --config "$work_dir/${scale}-node.yml" \
     --validate-only >/dev/null
 done
 
 mkdir -p "$work_dir/platform-output"
-python3 "$topology_repo/scripts/render-openstack-cluster.py" \
+python3 "$topology_repo/scripts/internal/render-openstack-cluster.py" \
   --config "$work_dir/three-node-platform.yml" \
   --output-dir "$work_dir/platform-output" >/dev/null
 python3 - \
@@ -751,10 +751,10 @@ PY
 # Keep 5/7-node physical scaling generic: three controller/network nodes and
 # additional compute nodes must render through both topology and Kolla layers.
 mkdir -p "$work_dir/seven-node-output"
-python3 "$topology_repo/scripts/render-openstack-cluster.py" \
+python3 "$topology_repo/scripts/internal/render-openstack-cluster.py" \
   --config "$work_dir/seven-node.yml" \
   --output-dir "$work_dir/seven-node-output" >/dev/null
-bash "$topology_repo/scripts/render-kolla-multinode.sh" >/dev/null
+bash "$topology_repo/scripts/internal/render-kolla-multinode.sh" >/dev/null
 python3 - \
   "$work_dir/seven-node-output/ansible-inventory.yml" \
   "$topology_repo/kolla/generated/multinode" \
@@ -802,12 +802,12 @@ PY
 # without an OpenStack cloud, Terraform state, or network access.
 kubespray_repo="$work_dir/kubespray-repo"
 mkdir -p \
-  "$kubespray_repo/scripts" \
+  "$kubespray_repo/scripts/internal" \
   "$kubespray_repo/config" \
   "$kubespray_repo/terraform/openstack" \
   "$kubespray_repo/.cache/terraform/bin"
-cp scripts/render-openstack-kubespray-inventory.sh "$kubespray_repo/scripts/"
-cp scripts/render-openstack-cluster.py "$kubespray_repo/scripts/"
+cp scripts/internal/render-openstack-kubespray-inventory.sh "$kubespray_repo/scripts/internal/"
+cp scripts/internal/render-openstack-cluster.py "$kubespray_repo/scripts/internal/"
 cp config/versions.env "$kubespray_repo/config/"
 : >"$kubespray_repo/terraform/openstack/terraform.tfstate"
 cat >"$work_dir/kubernetes-nodes.json" <<'JSON'
@@ -865,7 +865,7 @@ chmod +x "$kubespray_repo/.cache/terraform/bin/terraform"
 OPENSTACK_CLUSTER_CONFIG="$work_dir/three-node-platform.yml" \
 CHECK_KUBERNETES_NODES_JSON="$work_dir/kubernetes-nodes.json" \
 CHECK_KUBERNETES_API_JSON="$work_dir/kubernetes-api.json" \
-  bash "$kubespray_repo/scripts/render-openstack-kubespray-inventory.sh" >/dev/null
+  bash "$kubespray_repo/scripts/internal/render-openstack-kubespray-inventory.sh" >/dev/null
 
 python3 - \
   "$kubespray_repo/.cache/kubespray-inventory/openstack/hosts.yml" \
@@ -931,7 +931,7 @@ PATH="$work_dir/fake-bin:$PATH" \
 OPENSTACK_CLUSTER_CONFIG="$work_dir/three-node-platform.yml" \
 CHECK_KUBERNETES_NODES_JSON="$work_dir/kubernetes-nodes.json" \
 CHECK_KUBERNETES_API_JSON="$work_dir/kubernetes-api.json" \
-  bash "$kubespray_repo/scripts/render-openstack-kubespray-inventory.sh" >/dev/null
+  bash "$kubespray_repo/scripts/internal/render-openstack-kubespray-inventory.sh" >/dev/null
 python3 - \
   "$kubespray_repo/.cache/kubespray-inventory/openstack/group_vars/all/zzz-openstack-platform.yml" \
   "$kubespray_repo/.cache/kubespray-inventory/openstack/desired-nodes.json" <<'PY'
@@ -965,7 +965,7 @@ if PATH="$work_dir/fake-bin:$PATH" \
   OPENSTACK_CLUSTER_CONFIG="$work_dir/three-node-platform.yml" \
   CHECK_KUBERNETES_NODES_JSON="$work_dir/kubernetes-nodes.json" \
   CHECK_KUBERNETES_API_JSON="$work_dir/kubernetes-api.json" \
-    bash "$kubespray_repo/scripts/render-openstack-kubespray-inventory.sh" \
+    bash "$kubespray_repo/scripts/internal/render-openstack-kubespray-inventory.sh" \
       >"$work_dir/stale-plan.stdout" 2>"$work_dir/stale-plan.stderr"; then
   echo 'Stale managed-platform plan unexpectedly passed Kubespray rendering.' >&2
   exit 1
@@ -978,20 +978,20 @@ grep -q 'cluster plan is older than the authoritative topology' \
 # must save only a member credential, and a failed run must roll back its user.
 credential_repo="$work_dir/credential-repo"
 mkdir -p \
-  "$credential_repo/scripts" \
+  "$credential_repo/scripts/internal" \
   "$credential_repo/.cache/kolla-venv/bin" \
   "$credential_repo/terraform/openstack"
-cp scripts/management-kubernetes-cloud.sh "$credential_repo/scripts/"
-cat >"$credential_repo/scripts/render-openstack-cluster.py" <<'SH'
+cp scripts/internal/management-kubernetes-cloud.sh "$credential_repo/scripts/internal/"
+cat >"$credential_repo/scripts/internal/render-openstack-cluster.py" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 mkdir -p "$repo_dir/.cache/cluster"
 cat >"$repo_dir/.cache/cluster/cluster-plan.json" <<'JSON'
 {"node_count": 3, "storage_backend": "ceph", "platform": {"magnum_capi": {"enabled": true}}}
 JSON
 SH
-chmod +x "$credential_repo/scripts/render-openstack-cluster.py"
+chmod +x "$credential_repo/scripts/internal/render-openstack-cluster.py"
 cat >"$credential_repo/terraform/openstack/clouds.yaml" <<'YAML'
 clouds:
   admin:
@@ -1074,7 +1074,7 @@ chmod +x \
 
 if OS_CLIENT_CONFIG_FILE="$credential_repo/terraform/openstack/clouds.yaml" \
   OS_CLOUD=admin \
-  "$credential_repo/scripts/management-kubernetes-cloud.sh" create-credential \
+  "$credential_repo/scripts/internal/management-kubernetes-cloud.sh" create-credential \
     >"$work_dir/credential-plan.stdout" 2>"$work_dir/credential-plan.stderr"; then
   echo 'Unconfirmed management credential creation unexpectedly succeeded.' >&2
   exit 1
@@ -1086,7 +1086,7 @@ grep -q "CREATE-K8S-CLOUD-PRINCIPAL:project-1:kubespray-management:member" \
 OS_CLIENT_CONFIG_FILE="$credential_repo/terraform/openstack/clouds.yaml" \
 OS_CLOUD=admin \
 MANAGEMENT_CLOUD_CONFIRM='CREATE-K8S-CLOUD-PRINCIPAL:project-1:kubespray-management:member' \
-  "$credential_repo/scripts/management-kubernetes-cloud.sh" create-credential >/dev/null
+  "$credential_repo/scripts/internal/management-kubernetes-cloud.sh" create-credential >/dev/null
 credential_env="$credential_repo/kubeconfig/openstack-management.env"
 [[ -f $credential_env && $(stat -c '%a' "$credential_env") == 600 ]]
 grep -q '^MANAGEMENT_CLOUD_ROLE_NAME=member$' "$credential_env"
@@ -1094,7 +1094,7 @@ grep -q '^MANAGEMENT_CLOUD_USER_ID=user-1$' "$credential_env"
 grep -q '^OS_CACERT=/tmp/fake-openstack-ca.pem$' "$credential_env"
 OS_CLIENT_CONFIG_FILE="$credential_repo/terraform/openstack/clouds.yaml" \
 OS_CLOUD=admin \
-  "$credential_repo/scripts/management-kubernetes-cloud.sh" status >/dev/null
+  "$credential_repo/scripts/internal/management-kubernetes-cloud.sh" status >/dev/null
 
 rm -f \
   "$credential_env" \
@@ -1105,7 +1105,7 @@ if OS_CLIENT_CONFIG_FILE="$credential_repo/terraform/openstack/clouds.yaml" \
   OS_CLOUD=admin \
   MANAGEMENT_CLOUD_CONFIRM='CREATE-K8S-CLOUD-PRINCIPAL:project-1:kubespray-management:member' \
   FAKE_APPLICATION_CREDENTIAL_FAILURE=1 \
-    "$credential_repo/scripts/management-kubernetes-cloud.sh" create-credential \
+    "$credential_repo/scripts/internal/management-kubernetes-cloud.sh" create-credential \
       >"$work_dir/credential-failure.stdout" 2>"$work_dir/credential-failure.stderr"; then
   echo 'Injected management credential failure unexpectedly succeeded.' >&2
   exit 1
@@ -1211,7 +1211,7 @@ discovery = {
 Path(sys.argv[3]).write_text(json.dumps(discovery, indent=2) + "\n")
 PY
 
-python3 scripts/render-openwrt-plan.py \
+python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$openwrt_inventory" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1253,7 +1253,7 @@ assert "commit " not in batch
 PY
 
 openwrt_digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["digest"])' "$openwrt_output/plan.json")
-python3 scripts/render-openwrt-plan.py \
+python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$openwrt_inventory" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1297,7 +1297,7 @@ data["firewall"]["zones"].append({
 })
 Path(sys.argv[2]).write_text(json.dumps(data))
 PY
-python3 scripts/render-openwrt-plan.py \
+python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$openwrt_inventory" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1316,7 +1316,7 @@ router = data["all"]["children"]["openwrt"]["hosts"]["router"]
 router["dsa_bridge"]["provider_tagged_ports"] = ["lan1", "lan2"]
 Path(sys.argv[2]).write_text(yaml.safe_dump(data, sort_keys=False))
 PY
-python3 scripts/render-openwrt-plan.py \
+python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$work_dir/openwrt-expanded-port.yml" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1341,7 +1341,7 @@ router["networks"]["provider"]["probe_addresses"] = {
 }
 Path(sys.argv[2]).write_text(yaml.safe_dump(data, sort_keys=False))
 PY
-python3 scripts/render-openwrt-plan.py \
+python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$work_dir/openwrt-three-node.yml" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config "$work_dir/three-node.yml" \
@@ -1378,7 +1378,7 @@ provider["deployed_nodes"] = ["cloud01"]
 del provider["probe_addresses"]["cloud01"]
 Path(sys.argv[2]).write_text(yaml.safe_dump(data, sort_keys=False))
 PY
-python3 scripts/render-openwrt-plan.py \
+python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$work_dir/openwrt-expansion.yml" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config "$work_dir/three-node.yml" \
@@ -1416,7 +1416,7 @@ provider["dsa"]["bridge_vlans"][1]["ports"] = ["lan1:t"]
 Path(sys.argv[3]).write_text(json.dumps(provider))
 PY
 for openwrt_drift in management-port provider-port; do
-  if python3 scripts/render-openwrt-plan.py \
+  if python3 scripts/internal/render-openwrt-plan.py \
     --inventory "$openwrt_inventory" \
     --openstack-plan inventory/openstack-plan.yml \
     --cluster-config inventory/openstack-cluster.yml \
@@ -1447,7 +1447,7 @@ data["uci"]["dhcp"] = [
 ]
 Path(sys.argv[2]).write_text(json.dumps(data))
 PY
-if python3 scripts/render-openwrt-plan.py \
+if python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$openwrt_inventory" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1468,7 +1468,7 @@ data = yaml.safe_load(Path(sys.argv[1]).read_text())
 data["all"]["children"]["openwrt"]["hosts"]["router"]["physical_console_available"] = False
 Path(sys.argv[2]).write_text(yaml.safe_dump(data, sort_keys=False))
 PY
-if python3 scripts/render-openwrt-plan.py \
+if python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$work_dir/openwrt-no-console.yml" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1490,7 +1490,7 @@ router = data["all"]["children"]["openwrt"]["hosts"]["router"]
 router["networks"]["provider"]["probe_addresses"]["cloud01"] = "198.51.100.50"
 Path(sys.argv[2]).write_text(yaml.safe_dump(data, sort_keys=False))
 PY
-if python3 scripts/render-openwrt-plan.py \
+if python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$work_dir/openwrt-pool-probe.yml" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1527,7 +1527,7 @@ conflict["dsa"]["bridge_vlans"] = [{
 Path(sys.argv[4]).write_text(json.dumps(conflict))
 PY
 for openwrt_failure in pending no-masq vlan-conflict; do
-  if python3 scripts/render-openwrt-plan.py \
+  if python3 scripts/internal/render-openwrt-plan.py \
     --inventory "$openwrt_inventory" \
     --openstack-plan inventory/openstack-plan.yml \
     --cluster-config inventory/openstack-cluster.yml \
@@ -1553,7 +1553,7 @@ data["rollback_guard"] = {"armed": True, "change_id": "openwrt-existing-transact
 Path(sys.argv[2]).write_text(json.dumps(data))
 PY
 cp "$openwrt_output/plan.json" "$work_dir/openwrt-preserved-plan.json"
-if python3 scripts/render-openwrt-plan.py \
+if python3 scripts/internal/render-openwrt-plan.py \
   --inventory "$openwrt_inventory" \
   --openstack-plan inventory/openstack-plan.yml \
   --cluster-config inventory/openstack-cluster.yml \
@@ -1588,7 +1588,7 @@ assert "The provider interface already has an IPv4 address." in probe
 assert "failed_when: openwrt_provider_address_removed.rc != 0" in probe
 assert "provider.deployed" in probe and "port-to-br" in probe
 assert "rollback_guard_change_id=(.*)$', '\\\\1')" in discovery_playbook
-wrapper = Path("scripts/openwrt-router.sh").read_text()
+wrapper = Path("scripts/internal/openwrt-router.sh").read_text()
 assert "provider_probe_limit" not in wrapper
 assert '"$repo_dir/ansible/playbooks/probe-openstack-provider.yml"' in wrapper
 assert "flock -n 9" in wrapper and "cleanup-openwrt-prearm.yml" in wrapper
@@ -1627,12 +1627,12 @@ fi
 # verifies the wrapper's state separation, plan confirmation and argument flow.
 workload_repo="$work_dir/workload-repo"
 mkdir -p \
-  "$workload_repo/scripts" \
+  "$workload_repo/scripts/internal" \
   "$workload_repo/config" \
   "$workload_repo/terraform/modules" \
   "$workload_repo/terraform/workloads" \
   "$workload_repo/.cache/terraform/bin"
-cp scripts/terraform-workload.sh "$workload_repo/scripts/"
+cp scripts/internal/terraform-workload.sh "$workload_repo/scripts/internal/"
 cp config/versions.env "$workload_repo/config/"
 cp -a terraform/modules/openstack-vm "$workload_repo/terraform/modules/"
 cp -a terraform/workloads/_template "$workload_repo/terraform/workloads/"
@@ -1722,9 +1722,9 @@ case "$operation" in
     ;;
 esac
 SH
-chmod 0755 "$workload_repo/scripts/terraform-workload.sh" \
+chmod 0755 "$workload_repo/scripts/internal/terraform-workload.sh" \
   "$workload_repo/.cache/terraform/bin/terraform"
-workload_cli="$workload_repo/scripts/terraform-workload.sh"
+workload_cli="$workload_repo/scripts/internal/terraform-workload.sh"
 fake_terraform="$workload_repo/.cache/terraform/bin/terraform"
 fake_log="$workload_repo/terraform-calls.log"
 

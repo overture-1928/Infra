@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source "$repo_dir/config/versions.env"
-renderer="$repo_dir/scripts/render-openstack-cluster.py"
+renderer="$repo_dir/scripts/internal/render-openstack-cluster.py"
 cluster_cache="$repo_dir/.cache/cluster"
 ansible_inventory="$cluster_cache/ansible-inventory.yml"
 kolla_inventory="$repo_dir/kolla/generated/multinode"
@@ -44,7 +44,7 @@ prepare_terraform() {
 render_all() {
   render_topology
   require_kolla
-  "$repo_dir/scripts/render-kolla-multinode.sh"
+  "$repo_dir/scripts/internal/render-kolla-multinode.sh"
 }
 
 require_initial_three_node_ceph() {
@@ -162,7 +162,7 @@ HELP
     ;;
   setup)
     "$repo_dir/scripts/openstack.sh" setup
-    "$repo_dir/scripts/setup-terraform.sh"
+    "$repo_dir/scripts/internal/setup-terraform.sh"
     ;;
   render)
     render_all
@@ -176,19 +176,19 @@ HELP
     verify_hosts
     ;;
   openwrt-discover)
-    "$repo_dir/scripts/openwrt-router.sh" discover
+    "$repo_dir/scripts/internal/openwrt-router.sh" discover
     ;;
   openwrt-plan)
-    "$repo_dir/scripts/openwrt-router.sh" plan
+    "$repo_dir/scripts/internal/openwrt-router.sh" plan
     ;;
   openwrt-apply)
-    "$repo_dir/scripts/openwrt-router.sh" apply
+    "$repo_dir/scripts/internal/openwrt-router.sh" apply
     ;;
   openwrt-status)
-    "$repo_dir/scripts/openwrt-router.sh" status
+    "$repo_dir/scripts/internal/openwrt-router.sh" status
     ;;
   openwrt-rollback)
-    "$repo_dir/scripts/openwrt-router.sh" rollback
+    "$repo_dir/scripts/internal/openwrt-router.sh" rollback
     ;;
   deploy-openstack)
     deploy_openstack
@@ -210,11 +210,11 @@ HELP
     "$repo_dir/scripts/openstack.sh" deploy --inventory "$kolla_inventory"
     "$repo_dir/scripts/openstack.sh" validate-config --inventory "$kolla_inventory"
     "$repo_dir/scripts/openstack.sh" check --inventory "$kolla_inventory"
-    "$repo_dir/scripts/verify-openstack-cluster.sh"
+    "$repo_dir/scripts/internal/verify-openstack-cluster.sh"
     ;;
   verify-openstack)
     require_root
-    "$repo_dir/scripts/verify-openstack-cluster.sh"
+    "$repo_dir/scripts/internal/verify-openstack-cluster.sh"
     ;;
   terraform-plan)
     prepare_terraform
@@ -230,40 +230,40 @@ HELP
       apply -input=false -parallelism=1 "$cluster_cache/kubernetes.tfplan"
     ;;
   workload-new)
-    "$repo_dir/scripts/terraform-workload.sh" new "${@:2}"
+    "$repo_dir/scripts/internal/terraform-workload.sh" new "${@:2}"
     ;;
   workload-plan)
-    "$repo_dir/scripts/terraform-workload.sh" plan "${@:2}"
+    "$repo_dir/scripts/internal/terraform-workload.sh" plan "${@:2}"
     ;;
   workload-show)
-    "$repo_dir/scripts/terraform-workload.sh" show "${@:2}"
+    "$repo_dir/scripts/internal/terraform-workload.sh" show "${@:2}"
     ;;
   workload-apply)
-    "$repo_dir/scripts/terraform-workload.sh" apply "${@:2}"
+    "$repo_dir/scripts/internal/terraform-workload.sh" apply "${@:2}"
     ;;
   workload-output)
-    "$repo_dir/scripts/terraform-workload.sh" output "${@:2}"
+    "$repo_dir/scripts/internal/terraform-workload.sh" output "${@:2}"
     ;;
   deploy-kubernetes)
-    "$repo_dir/scripts/deploy-openstack-kubernetes.sh"
+    "$repo_dir/scripts/internal/deploy-openstack-kubernetes.sh"
     ;;
   prepare-k8s-cloud)
-    "$repo_dir/scripts/management-kubernetes-cloud.sh" create-credential
+    "$repo_dir/scripts/internal/management-kubernetes-cloud.sh" create-credential
     ;;
   platform-plan)
-    "$repo_dir/scripts/platform-services.sh" plan
+    "$repo_dir/scripts/internal/platform-services.sh" plan
     ;;
   platform-apply)
-    "$repo_dir/scripts/platform-services.sh" apply
+    "$repo_dir/scripts/internal/platform-services.sh" apply
     ;;
   platform-reconfigure)
-    "$repo_dir/scripts/platform-services.sh" reconfigure
+    "$repo_dir/scripts/internal/platform-services.sh" reconfigure
     ;;
   platform-status)
-    "$repo_dir/scripts/platform-services.sh" status
+    "$repo_dir/scripts/internal/platform-services.sh" status
     ;;
   hosted-plan)
-    "$repo_dir/scripts/platform-services.sh" hosted-control-plane-plan
+    "$repo_dir/scripts/internal/platform-services.sh" hosted-control-plane-plan
     ;;
   *)
     fail "Unknown command: $command_name"

@@ -4,7 +4,7 @@ TERRAFORM := $(if $(wildcard .cache/terraform/bin/terraform),.cache/terraform/bi
 .PHONY: check fmt host-syntax terraform-init terraform-plan
 
 check:
-	./scripts/check-openstack-repository.sh
+	./scripts/internal/check-openstack-repository.sh
 
 fmt:
 	$(TERRAFORM) -chdir=terraform fmt -recursive

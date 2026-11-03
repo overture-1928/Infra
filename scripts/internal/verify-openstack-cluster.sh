@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 openstack_bin="$repo_dir/.cache/kolla-venv/bin/openstack"
 plan="$repo_dir/.cache/cluster/cluster-plan.json"
 

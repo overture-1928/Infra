@@ -2,7 +2,7 @@
 set -euo pipefail
 umask 077
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 command_name=${1:-help}
 credential_name=${MANAGEMENT_CLOUD_CREDENTIAL_NAME:-kubespray-management}
 principal_name=${MANAGEMENT_CLOUD_USER_NAME:-kubespray-management}
@@ -15,7 +15,7 @@ openstack_bin="$repo_dir/.cache/kolla-venv/bin/openstack"
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 require_platform_profile() {
-  "$repo_dir/scripts/render-openstack-cluster.py" >/dev/null
+  "$repo_dir/scripts/internal/render-openstack-cluster.py" >/dev/null
   python3 - "$repo_dir/.cache/cluster/cluster-plan.json" <<'PY'
 import json
 import sys
@@ -473,7 +473,7 @@ PY
 case "$command_name" in
   help)
     cat <<'HELP'
-Usage: scripts/management-kubernetes-cloud.sh COMMAND
+Usage: scripts/internal/management-kubernetes-cloud.sh COMMAND
 
   create-credential  create a dedicated member user and save its application credential once
   status             verify the saved file and OpenStack credential metadata

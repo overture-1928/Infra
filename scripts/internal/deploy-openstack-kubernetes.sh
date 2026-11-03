@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 runtime_dir="$repo_dir/.cache/kubespray-inventory/openstack"
 state_dir="$repo_dir/state/kubespray/openstack"
 
-"$repo_dir/scripts/setup-kubespray.sh"
+"$repo_dir/scripts/internal/setup-kubespray.sh"
 
 sample_dir="$repo_dir/.cache/kubespray/inventory/sample"
 mkdir -p "$runtime_dir/group_vars"
 cp -a "$sample_dir/group_vars/." "$runtime_dir/group_vars/"
 cp -a "$repo_dir/kubespray/openstack/group_vars/." "$runtime_dir/group_vars/"
-"$repo_dir/scripts/render-openstack-kubespray-inventory.sh"
+"$repo_dir/scripts/internal/render-openstack-kubespray-inventory.sh"
 
 ansible_playbook="$repo_dir/.cache/kubespray-venv/bin/ansible-playbook"
 inventory="$runtime_dir/hosts.yml"
@@ -31,7 +31,7 @@ fi
 if [[ $(jq -r '.platform_enabled // false' "$desired") == true ]]; then
   [[ -r $management_cloud_env ]] || {
     echo "Management Kubernetes needs its OpenStack application credential: $management_cloud_env" >&2
-    echo 'Run scripts/management-kubernetes-cloud.sh create-credential first.' >&2
+    echo 'Run scripts/internal/management-kubernetes-cloud.sh create-credential first.' >&2
     exit 1
   }
   [[ $(stat -c '%a' "$management_cloud_env") == 600 ]] || {

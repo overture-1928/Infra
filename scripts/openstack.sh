@@ -57,8 +57,8 @@ run_kolla() {
 
 render() {
   [[ -x $venv_dir/bin/python ]] || fail 'Run scripts/openstack.sh setup first.'
-  "$repo_dir/scripts/render-openstack-cluster.py"
-  "$repo_dir/scripts/render-kolla-multinode.sh"
+  "$repo_dir/scripts/internal/render-openstack-cluster.py"
+  "$repo_dir/scripts/internal/render-kolla-multinode.sh"
 }
 
 setup() {

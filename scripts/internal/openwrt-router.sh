@@ -3,7 +3,7 @@ set -euo pipefail
 
 umask 077
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 openwrt_inventory=${OPENWRT_INVENTORY:-$repo_dir/inventory/openwrt-router.local.yml}
 openwrt_cache="$repo_dir/.cache/openwrt"
 openwrt_plan="$openwrt_cache/plan.json"
@@ -75,7 +75,7 @@ discover_router() {
 
 render_plan() {
   select_cluster_config
-  "$repo_dir/scripts/render-openwrt-plan.py" \
+  "$repo_dir/scripts/internal/render-openwrt-plan.py" \
     --inventory "$openwrt_inventory" \
     --discovery "$openwrt_discovery" \
     --openstack-plan "$openstack_plan" \
@@ -172,7 +172,7 @@ apply_router() {
   openwrt_playbook "$repo_dir/ansible/playbooks/verify-openwrt.yml" || guarded_failure
 
   select_cluster_config
-  "$repo_dir/scripts/render-openstack-cluster.py" --config "$cluster_config" >/dev/null || guarded_failure
+  "$repo_dir/scripts/internal/render-openstack-cluster.py" --config "$cluster_config" >/dev/null || guarded_failure
   cluster_playbook \
     "$repo_dir/ansible/playbooks/probe-openstack-provider.yml" || guarded_failure
 
@@ -186,7 +186,7 @@ command_name=${1:-help}
 case "$command_name" in
   help)
     cat <<'HELP'
-Usage: scripts/openwrt-router.sh COMMAND
+Usage: scripts/internal/openwrt-router.sh COMMAND
 
   discover  collect nonsecret board, DSA, firewall and network facts
   plan      rediscover and render a reviewed UCI plan without changing the router

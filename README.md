@@ -156,6 +156,7 @@ sudo ./scripts/cluster.sh verify-openstack
 | `ubuntu-autoinstall/` | 노드별 Ubuntu seed 입력 |
 | `ansible/` | 호스트, Netplan, IOMMU 준비와 검증 |
 | `kolla/` | Kolla globals, inventory와 Nova PCI 예시 |
+| `scripts/` | 운영자 진입점과 `internal/` 하위 구현 ([구성 설명](scripts/README.md)) |
 | `scripts/ceph-cluster.sh` | cephadm 초기 cluster와 OSD/pool/client 구성 |
 | `terraform/openstack/` | tenant network와 management Kubernetes VM 3대 |
 | `terraform/workloads/` | 이후 애플리케이션·스토리지 VM별 독립 state |

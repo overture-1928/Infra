@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 venv_dir="$repo_dir/.cache/kolla-venv"
 source_inventory=${1:-$repo_dir/kolla/inventory/multinode.local}
 output="$repo_dir/kolla/generated/multinode"
@@ -16,7 +16,7 @@ globals_file="$repo_dir/kolla/generated/globals.yml"
   exit 1
 }
 [[ -f $globals_file ]] || {
-  echo 'Run scripts/render-openstack-cluster.py before rendering the Kolla inventory.' >&2
+  echo 'Run scripts/internal/render-openstack-cluster.py before rendering the Kolla inventory.' >&2
   exit 1
 }
 kolla_share=$(find -L "$venv_dir" -type d -path '*/share/kolla-ansible' -print -quit)

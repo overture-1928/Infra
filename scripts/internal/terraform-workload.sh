@@ -3,7 +3,7 @@ set -euo pipefail
 
 umask 077
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 source "$repo_dir/config/versions.env"
 
 terraform_bin=${TERRAFORM_BIN:-$repo_dir/.cache/terraform/bin/terraform}
@@ -25,7 +25,7 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'HELP'
-Usage: scripts/terraform-workload.sh COMMAND [STACK]
+Usage: scripts/internal/terraform-workload.sh COMMAND [STACK]
 
   new STACK      copy terraform/workloads/_template into a new workload stack
   plan STACK     initialize the stack and save a reviewable Terraform plan
@@ -43,7 +43,7 @@ workspaces are rejected; edit the stack files and terraform.tfvars instead.
 
 After reviewing `plan` or `show`, apply with the exact value they print:
   TERRAFORM_WORKLOAD_APPLY_CONFIRM='APPLY-TERRAFORM-WORKLOAD:<stack>:<sha256>' \
-    scripts/terraform-workload.sh apply <stack>
+    scripts/internal/terraform-workload.sh apply <stack>
 
 Saved plans:    .cache/terraform/workloads/<stack>.tfplan
 Plan context:   .cache/terraform/workloads/<stack>.tfplan.context.json
@@ -61,7 +61,7 @@ validate_stack_name() {
 require_stack_argument() {
   local operation=$1
   shift
-  [[ $# -eq 1 ]] || fail "Usage: scripts/terraform-workload.sh $operation STACK"
+  [[ $# -eq 1 ]] || fail "Usage: scripts/internal/terraform-workload.sh $operation STACK"
   validate_stack_name "$1"
 }
 
@@ -592,6 +592,6 @@ case "$command_name" in
     output_stack "$1"
     ;;
   *)
-    fail "Unknown command: $command_name. Run scripts/terraform-workload.sh help."
+    fail "Unknown command: $command_name. Run scripts/internal/terraform-workload.sh help."
     ;;
 esac

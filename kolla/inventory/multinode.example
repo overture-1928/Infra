@@ -1,4 +1,4 @@
-# Primary groups used by scripts/render-kolla-multinode.sh.
+# Primary groups used by scripts/internal/render-kolla-multinode.sh.
 [control]
 cloud01 ansible_host=192.0.2.2 ansible_user=operator
 cloud02 ansible_host=192.0.2.4 ansible_user=operator
