@@ -117,7 +117,7 @@ command_name=${1:-help}
 case "$command_name" in
   help)
     cat <<'HELP'
-Usage: scripts/cluster.sh COMMAND
+Usage: scripts/cluster.sh COMMAND [ARGUMENTS]
 
   validate             validate the authoritative node topology
   setup                install pinned Kolla/Terraform tooling, preserve passwords, render inventories
@@ -134,6 +134,11 @@ Usage: scripts/cluster.sh COMMAND
   verify-openstack     verify APIs and registered OpenStack services
   terraform-plan       create a reviewed Kubernetes infrastructure plan
   terraform-apply      apply that saved plan serially (confirmation)
+  workload-new STACK   create an isolated Terraform workload stack from the template
+  workload-plan STACK  save a reviewable plan for one workload stack
+  workload-show STACK  show a saved workload plan and its SHA-256 confirmation
+  workload-apply STACK apply the exact saved workload plan serially (confirmation)
+  workload-output STACK show outputs from one workload stack's state
   deploy-kubernetes    install or scale Kubernetes through Kubespray
   prepare-k8s-cloud    create a dedicated non-admin management-cloud credential
   platform-plan        verify the 3-node/Ceph management-service prerequisites (root)
@@ -217,6 +222,21 @@ HELP
     prepare_terraform
     "$terraform_bin" -chdir="$repo_dir/terraform/openstack" \
       apply -input=false -parallelism=1 "$cluster_cache/kubernetes.tfplan"
+    ;;
+  workload-new)
+    "$repo_dir/scripts/terraform-workload.sh" new "${@:2}"
+    ;;
+  workload-plan)
+    "$repo_dir/scripts/terraform-workload.sh" plan "${@:2}"
+    ;;
+  workload-show)
+    "$repo_dir/scripts/terraform-workload.sh" show "${@:2}"
+    ;;
+  workload-apply)
+    "$repo_dir/scripts/terraform-workload.sh" apply "${@:2}"
+    ;;
+  workload-output)
+    "$repo_dir/scripts/terraform-workload.sh" output "${@:2}"
     ;;
   deploy-kubernetes)
     "$repo_dir/scripts/deploy-openstack-kubernetes.sh"

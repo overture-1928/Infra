@@ -40,6 +40,7 @@ done
 for pattern in \
   '.terraform/' \
   '*.tfstate' \
+  '.terraform.tfstate.lock.info' \
   '*.tfvars.json' \
   'override.tf' \
   '*.local.yml' \
@@ -89,6 +90,13 @@ for local_private_file in \
     exit 1
   }
 done
+
+while IFS= read -r -d '' workload_tfvars; do
+  [[ $(stat -c '%a' "$workload_tfvars") == 600 ]] || {
+    echo "Local workload input must use mode 0600: $workload_tfvars" >&2
+    exit 1
+  }
+done < <(find terraform/workloads -mindepth 2 -maxdepth 2 -type f -name terraform.tfvars -print0 2>/dev/null)
 
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   tracked_ignored=$(git ls-files -ci --exclude-standard)
@@ -204,8 +212,10 @@ for required_path in (
     "inventory/openstack-plan.local.yml",
     "inventory/openwrt-router.local.yml",
     "terraform/openstack/terraform.tfvars",
+    "terraform/workloads/<stack>/terraform.tfvars",
     "kolla/generated/passwords.yml",
     "terraform/openstack/terraform.tfstate*",
+    "terraform/workloads/<stack>/terraform.tfstate*",
 ):
     assert required_path in local_data_text, f"local data guide omits {required_path}"
 
@@ -348,6 +358,15 @@ match = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', versions)
 assert match and match.group(1) == provider
 required = re.search(r'(?m)^\s*required_version\s*=\s*"= ([^"]+)"', versions)
 assert required and required.group(1) == terraform_cli
+for terraform_versions in (
+    Path("terraform/modules/openstack-vm/versions.tf"),
+    Path("terraform/workloads/_template/versions.tf"),
+):
+    text = terraform_versions.read_text()
+    match = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', text)
+    assert match and match.group(1) == provider, terraform_versions
+    required = re.search(r'(?m)^\s*required_version\s*=\s*"= ([^"]+)"', text)
+    assert required and required.group(1) == terraform_cli, terraform_versions
 assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", terraform_cli)
 assert re.fullmatch(r"[0-9a-f]{64}", terraform_amd64)
 assert re.fullmatch(r"[0-9a-f]{64}", terraform_arm64)
@@ -384,6 +403,40 @@ assert terraform_main.count('allocation_pool {') == 3
 assert 'resource "openstack_networking_port_v2" "kubernetes_api_vip"' in terraform_main
 assert "depends_on = [openstack_networking_port_v2.kubernetes_api_vip]" in terraform_main
 assert 'output "skyline_url"' in Path("terraform/openstack/outputs.tf").read_text()
+workload_module = Path("terraform/modules/openstack-vm/main.tf").read_text()
+for resource in (
+    'resource "openstack_networking_port_v2" "this"',
+    'resource "openstack_blockstorage_volume_v3" "root"',
+    'resource "openstack_compute_instance_v2" "this"',
+    'resource "openstack_networking_floatingip_v2" "this"',
+):
+    assert resource in workload_module
+assert workload_module.count("prevent_destroy = true") == 2
+assert "delete_on_termination = false" in workload_module
+assert "security_groups = []" not in workload_module
+workload_module_variables = Path("terraform/modules/openstack-vm/variables.tf").read_text()
+assert "length(trimspace(var.flavor_id)) > 0" in workload_module_variables
+workload_template = Path("terraform/workloads/_template/main.tf").read_text()
+assert 'source   = "../../modules/openstack-vm"' in workload_template
+assert 'for_each = local.enabled_instances' in workload_template
+assert 'name       = "${var.workload_name}-${each.key}"' in workload_template
+workload_example = Path("terraform/workloads/_template/terraform.tfvars.example").read_text()
+assert re.search(r"(?m)^enable_instances\s*=\s*false$", workload_example)
+for variable in ("network_id", "subnet_id", "image_id", "flavor_id", "instances"):
+    assert re.search(rf"(?m)^\s*{variable}\s*=", workload_example), variable
+workload_script = Path("scripts/terraform-workload.sh").read_text()
+for command in ("new", "plan", "show", "apply", "output"):
+    assert re.search(rf"(?m)^\s*{command}\)$", workload_script), command
+assert "APPLY-TERRAFORM-WORKLOAD:$stack:$digest" in workload_script
+assert 'plan -input=false -lock=true -var="workload_name=$stack"' in workload_script
+assert 'apply -input=false -lock=true -parallelism=1 "$plan"' in workload_script
+assert "^[a-z0-9][a-z0-9-]{0,62}$" in workload_script
+assert 'cloud_context_sha256' in workload_script
+assert 'tfplan.context.json' in workload_script
+assert 'for template_file in "${template_files[@]}"' in workload_script
+assert 'cp -a "$template_dir/."' not in workload_script
+assert "workload-plan" in cluster_script and "workload-apply" in cluster_script
+assert "docs/terraform-workloads.md" in Path("README.md").read_text()
 PY
 
 # Validate the checked-in one-node topology without writing generated files.
@@ -1526,12 +1579,358 @@ else
   notice 'Ansible executables are unavailable; structural YAML and generated inventory checks passed.'
 fi
 
+# Exercise isolated workload roots without contacting OpenStack. The fake CLI
+# verifies the wrapper's state separation, plan confirmation and argument flow.
+workload_repo="$work_dir/workload-repo"
+mkdir -p \
+  "$workload_repo/scripts" \
+  "$workload_repo/config" \
+  "$workload_repo/terraform/modules" \
+  "$workload_repo/terraform/workloads" \
+  "$workload_repo/.cache/terraform/bin"
+cp scripts/terraform-workload.sh "$workload_repo/scripts/"
+cp config/versions.env "$workload_repo/config/"
+cp -a terraform/modules/openstack-vm "$workload_repo/terraform/modules/"
+cp -a terraform/workloads/_template "$workload_repo/terraform/workloads/"
+printf 'fake certificate authority\n' >"$workload_repo/ca.pem"
+cat >"$workload_repo/cloud-a.yaml" <<YAML
+clouds:
+  admin:
+    region_name: RegionOne
+    cacert: $workload_repo/ca.pem
+YAML
+cat >"$workload_repo/cloud-b.yaml" <<'YAML'
+clouds:
+  admin:
+    region_name: RegionTwo
+YAML
+cat >"$workload_repo/cloud-relative-cert.yaml" <<'YAML'
+clouds:
+  admin:
+    cacert: ca.pem
+YAML
+mkdir "$workload_repo/terraform/workloads/_template/.terraform"
+printf 'template state must never be copied\n' > \
+  "$workload_repo/terraform/workloads/_template/terraform.tfstate"
+printf 'template provider cache must never be copied\n' > \
+  "$workload_repo/terraform/workloads/_template/.terraform/provider-sentinel"
+printf 'template credential must never be copied\n' > \
+  "$workload_repo/terraform/workloads/_template/clouds.yaml"
+printf 'template override must never be copied\n' > \
+  "$workload_repo/terraform/workloads/_template/override.tf"
+cat >"$workload_repo/.cache/terraform/bin/terraform" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "$0")/../../../" && pwd)
+source "$repo_dir/config/versions.env"
+
+if [[ ${1:-} == version && ${2:-} == -json ]]; then
+  printf '{"terraform_version":"%s"}\n' "$TERRAFORM_CLI_VERSION"
+  exit 0
+fi
+
+workdir=
+operation=
+out_file=
+for argument in "$@"; do
+  case "$argument" in
+    -chdir=*) workdir=${argument#-chdir=} ;;
+    workspace) operation=workspace ;;
+    show)
+      if [[ $operation == workspace ]]; then
+        operation=workspace-show
+      else
+        operation=show
+      fi
+      ;;
+    init|plan|apply|output) operation=$argument ;;
+    -out=*) out_file=${argument#-out=} ;;
+  esac
+done
+[[ -n $workdir && -n $operation ]] || exit 2
+printf 'cloud=%s args=%s\n' "${OS_CLIENT_CONFIG_FILE:-}" "$*" >>"$FAKE_TERRAFORM_LOG"
+
+case "$operation" in
+  init)
+    mkdir -p "$workdir/.terraform"
+    ;;
+  workspace-show)
+    if [[ -f $workdir/.terraform/environment ]]; then
+      cat "$workdir/.terraform/environment"
+    else
+      printf 'default\n'
+    fi
+    ;;
+  plan)
+    [[ -n $out_file ]]
+    printf 'fake plan for %s\n' "$*" >"$out_file"
+    ;;
+  show)
+    printf 'fake saved plan\n'
+    ;;
+  apply)
+    [[ " $* " == *" -parallelism=1 "* ]]
+    : >"$workdir/terraform.tfstate"
+    ;;
+  output)
+    printf 'instances = {}\n'
+    ;;
+esac
+SH
+chmod 0755 "$workload_repo/scripts/terraform-workload.sh" \
+  "$workload_repo/.cache/terraform/bin/terraform"
+workload_cli="$workload_repo/scripts/terraform-workload.sh"
+fake_terraform="$workload_repo/.cache/terraform/bin/terraform"
+fake_log="$workload_repo/terraform-calls.log"
+
+if (cd "$workload_repo" && "$workload_cli" new ../escape >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a path traversal stack name.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && "$workload_cli" new _template >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted its template as a stack.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && "$workload_cli" new UPPER >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted an uppercase stack name.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && "$workload_cli" new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a stack name longer than 63 characters.' >&2
+  exit 1
+fi
+
+(cd "$workload_repo" && "$workload_cli" new app >/dev/null)
+(cd "$workload_repo" && "$workload_cli" new database >/dev/null)
+for contaminated_path in \
+  terraform.tfstate \
+  .terraform/provider-sentinel \
+  clouds.yaml \
+  override.tf; do
+  [[ ! -e $workload_repo/terraform/workloads/app/$contaminated_path ]]
+  [[ ! -e $workload_repo/terraform/workloads/database/$contaminated_path ]]
+done
+[[ $(stat -c '%a' "$workload_repo/terraform/workloads/app/terraform.tfvars") == 600 ]]
+chmod 0644 "$workload_repo/terraform/workloads/app/terraform.tfvars"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" plan app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted an insecure terraform.tfvars mode.' >&2
+  exit 1
+fi
+chmod 0600 "$workload_repo/terraform/workloads/app/terraform.tfvars"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-relative-cert.yaml \
+  TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" plan database >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a relative certificate path from clouds.yaml.' >&2
+  exit 1
+fi
+
+app_plan_output=$(
+  cd "$workload_repo"
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+    "$workload_cli" plan app
+)
+app_plan="$workload_repo/.cache/terraform/workloads/app.tfplan"
+app_context="$workload_repo/.cache/terraform/workloads/app.tfplan.context.json"
+[[ -f $app_plan && $(stat -c '%a' "$app_plan") == 600 ]]
+[[ -f $app_context && ! -L $app_context && $(stat -c '%a' "$app_context") == 600 ]]
+app_digest=$(sha256sum "$app_plan" | cut -d' ' -f1)
+grep -Fq "APPLY-TERRAFORM-WORKLOAD:app:$app_digest" <<<"$app_plan_output"
+grep -Fq "\"plan_sha256\": \"$app_digest\"" "$app_context"
+grep -Fq '"stack": "app"' "$app_context"
+
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TF_CLI_ARGS_apply=-lock=false \
+  TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  TERRAFORM_WORKLOAD_APPLY_CONFIRM="APPLY-TERRAFORM-WORKLOAD:app:$app_digest" \
+  "$workload_cli" apply app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted ambient TF_CLI_ARGS_apply.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TF_DATA_DIR=.shared-terraform-data \
+  TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted ambient TF_DATA_DIR.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TF_WORKSPACE=other \
+  TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted ambient TF_WORKSPACE.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TF_VAR_flavor_id=unreviewed \
+  TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted ambient TF_VAR input.' >&2
+  exit 1
+fi
+
+for hidden_input in unreviewed.auto.tfvars override.tf; do
+  printf 'enable_instances = true\n' > \
+    "$workload_repo/terraform/workloads/app/$hidden_input"
+  if (cd "$workload_repo" && \
+    OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+    "$workload_cli" show app >/dev/null 2>&1); then
+    echo "Workload wrapper accepted ignored Terraform input: $hidden_input" >&2
+    exit 1
+  fi
+  rm "$workload_repo/terraform/workloads/app/$hidden_input"
+done
+
+printf 'other\n' >"$workload_repo/terraform/workloads/app/.terraform/environment"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a non-default persisted Terraform workspace.' >&2
+  exit 1
+fi
+rm "$workload_repo/terraform/workloads/app/.terraform/environment"
+
+cat >"$workload_repo/terraform/workloads/app/secure.yaml" <<'YAML'
+clouds:
+  admin:
+    auth:
+      password: changed-after-plan
+YAML
+chmod 0600 "$workload_repo/terraform/workloads/app/secure.yaml"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper ignored a provider-discovered secure.yaml added after planning.' >&2
+  exit 1
+fi
+rm "$workload_repo/terraform/workloads/app/secure.yaml"
+
+cp "$workload_repo/ca.pem" "$workload_repo/ca.pem.original"
+printf 'changed after plan\n' >>"$workload_repo/ca.pem"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper ignored certificate content changed after planning.' >&2
+  exit 1
+fi
+mv "$workload_repo/ca.pem.original" "$workload_repo/ca.pem"
+
+(
+  exec 8<"$workload_repo/.cache/terraform/workloads"
+  flock -n 8
+  if cd "$workload_repo" && \
+    OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+    "$workload_cli" show app >/dev/null 2>&1; then
+    echo 'Workload wrapper ignored contention on the shared workload lock.' >&2
+    exit 1
+  fi
+  flock -u 8
+)
+
+calls_before_context_rejection=$(wc -l <"$fake_log")
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper showed a plan under a different OpenStack credential context.' >&2
+  exit 1
+fi
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  TERRAFORM_WORKLOAD_APPLY_CONFIRM="APPLY-TERRAFORM-WORKLOAD:app:$app_digest" \
+  "$workload_cli" apply app >/dev/null 2>&1); then
+  echo 'Workload wrapper applied a plan under a different OpenStack credential context.' >&2
+  exit 1
+fi
+calls_after_context_rejection=$(wc -l <"$fake_log")
+[[ $calls_after_context_rejection == "$calls_before_context_rejection" ]] || {
+  echo 'Workload wrapper ran Terraform init before rejecting a different credential context.' >&2
+  exit 1
+}
+
+cp "$workload_repo/cloud-a.yaml" "$workload_repo/cloud-a.yaml.original"
+printf '# changed after plan\n' >>"$workload_repo/cloud-a.yaml"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a cloud configuration modified after planning.' >&2
+  exit 1
+fi
+mv "$workload_repo/cloud-a.yaml.original" "$workload_repo/cloud-a.yaml"
+
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null)
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  TERRAFORM_WORKLOAD_APPLY_CONFIRM=wrong "$workload_cli" apply app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted an incorrect plan confirmation.' >&2
+  exit 1
+fi
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  TERRAFORM_WORKLOAD_APPLY_CONFIRM="APPLY-TERRAFORM-WORKLOAD:app:$app_digest" \
+  "$workload_cli" apply app >/dev/null)
+chmod 0644 "$workload_repo/terraform/workloads/app/terraform.tfstate"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" output app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted an insecure local Terraform state mode.' >&2
+  exit 1
+fi
+chmod 0600 "$workload_repo/terraform/workloads/app/terraform.tfstate"
+printf 'fake backup state\n' >"$workload_repo/terraform/workloads/app/terraform.tfstate.backup"
+chmod 0644 "$workload_repo/terraform/workloads/app/terraform.tfstate.backup"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" show app >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted an insecure Terraform state backup mode.' >&2
+  exit 1
+fi
+rm "$workload_repo/terraform/workloads/app/terraform.tfstate.backup"
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" output app >/dev/null)
+ln -s ../app/.terraform "$workload_repo/terraform/workloads/database/.terraform"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" plan database >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a shared symbolic-link Terraform data directory.' >&2
+  exit 1
+fi
+rm "$workload_repo/terraform/workloads/database/.terraform"
+ln -s ../app/terraform.tfstate \
+  "$workload_repo/terraform/workloads/database/terraform.tfstate"
+if (cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" plan database >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted a symbolic-link Terraform state.' >&2
+  exit 1
+fi
+rm "$workload_repo/terraform/workloads/database/terraform.tfstate"
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" plan database >/dev/null)
+[[ -f $workload_repo/.cache/terraform/workloads/database.tfplan ]]
+[[ -f $workload_repo/.cache/terraform/workloads/database.tfplan.context.json ]]
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-b.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" output database >/dev/null)
+grep -Fq -- '-var=workload_name=app' "$fake_log"
+grep -Fq -- '-var=workload_name=database' "$fake_log"
+grep -Fq -- 'plan -input=false -lock=true' "$fake_log"
+grep -Fq -- 'apply -input=false -lock=true -parallelism=1' "$fake_log"
+grep -Fq "cloud=$workload_repo/cloud-a.yaml" "$fake_log"
+grep -Fq "cloud=$workload_repo/cloud-b.yaml" "$fake_log"
+
 terraform_bin=
 [[ ! -x .cache/terraform/bin/terraform ]] || terraform_bin=.cache/terraform/bin/terraform
 [[ -n $terraform_bin ]] || terraform_bin=$(command -v terraform || true)
 [[ -n $terraform_bin ]] || [[ ! -x /tmp/terraform-bin/terraform ]] || terraform_bin=/tmp/terraform-bin/terraform
 if [[ -n $terraform_bin ]]; then
-  "$terraform_bin" -chdir=terraform/openstack fmt -check -recursive
+  "$terraform_bin" -chdir=terraform fmt -check -recursive
   if [[ -d terraform/openstack/.terraform ]]; then
     if ! terraform_validate_output=$(
       "$terraform_bin" -chdir=terraform/openstack validate -no-color 2>&1

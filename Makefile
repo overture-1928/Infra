@@ -7,7 +7,7 @@ check:
 	./scripts/check-openstack-repository.sh
 
 fmt:
-	$(TERRAFORM) -chdir=terraform/openstack fmt -recursive
+	$(TERRAFORM) -chdir=terraform fmt -recursive
 
 host-syntax:
 	ANSIBLE_LOCAL_TEMP=/tmp/infra-openstack-ansible \

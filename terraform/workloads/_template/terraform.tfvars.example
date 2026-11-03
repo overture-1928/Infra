@@ -1,0 +1,38 @@
+# Keep this false until every resource ID, CIDR and instance setting has been reviewed.
+enable_instances = false
+workload_name    = "example-service"
+cloud_name       = "admin"
+
+# Replace these syntactically valid placeholder IDs with values from your cloud.
+network_id = "00000000-0000-4000-8000-000000000001"
+subnet_id  = "00000000-0000-4000-8000-000000000002"
+image_id   = "00000000-0000-4000-8000-000000000003"
+flavor_id  = "1"
+
+# RFC 5737 documentation ranges are intentionally non-production examples.
+ssh_ingress_cidr      = "192.0.2.0/24"
+internal_ingress_cidr = "203.0.113.0/24"
+
+additional_ingress_rules = {
+  https = {
+    protocol         = "tcp"
+    port_range_min   = 443
+    port_range_max   = 443
+    remote_ip_prefix = "198.51.100.0/24"
+  }
+}
+
+# Set these only when one or more instances request a Floating IP.
+floating_ip_pool      = null
+floating_ip_subnet_id = null
+
+instances = {
+  node-01 = {
+    fixed_ip         = "203.0.113.20"
+    root_volume_size = 40
+    key_pair         = "REPLACE_WITH_EXISTING_KEYPAIR"
+    metadata = {
+      role = "application"
+    }
+  }
+}

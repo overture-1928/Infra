@@ -21,8 +21,13 @@
 | `cluster.sh deploy-openstack` | Kolla bootstrap 후 최초 OpenStack 배포 | 현재 토폴로지 전체 |
 | `cluster.sh expand-openstack` | DB 백업 후 기존 OpenStack에 노드와 서비스 추가 | 현재 OpenStack 제어 계층 |
 | `cluster.sh verify-openstack` | API와 등록 서비스 조회 | 읽기 전용 |
-| `cluster.sh terraform-plan` | Terraform 계획을 `.cache/cluster/`에 저장 | OpenStack 자원 변경 없음 |
-| `cluster.sh terraform-apply` | 저장된 같은 Terraform 계획 적용 | OpenStack 네트워크·볼륨·VM |
+| `cluster.sh terraform-plan` | Kubernetes/platform root의 Terraform 계획을 `.cache/cluster/`에 저장 | OpenStack 자원 변경 없음 |
+| `cluster.sh terraform-apply` | Kubernetes/platform root의 저장된 같은 계획 적용 | OpenStack 네트워크·볼륨·management VM |
+| `cluster.sh workload-new <stack>` | 추적되는 템플릿에서 서비스 전용 Terraform root와 mode `0600` 변수 파일 생성 | 저장소의 `terraform/workloads/<stack>/` |
+| `cluster.sh workload-plan <stack>` | 서비스 전용 plan을 원자적으로 저장하고 SHA-256 확인값 출력 | OpenStack 자원 변경 없음 |
+| `cluster.sh workload-show <stack>` | 저장된 workload plan, SHA-256과 현재 확인값 표시 | OpenStack 읽기 전용; 로컬 provider 초기화 가능 |
+| `cluster.sh workload-apply <stack>` | 확인된 같은 plan을 workload 공용 lock과 `parallelism=1`로 적용 | 해당 스택의 OpenStack VM·볼륨·포트 |
+| `cluster.sh workload-output <stack>` | 해당 스택의 local 또는 remote backend에서 출력 조회 | OpenStack 읽기 전용; 로컬 provider 초기화 가능 |
 | `cluster.sh deploy-kubernetes` | Kubespray 최초 설치 또는 scale | Kubernetes VM |
 | `ceph-cluster.sh osd-apply` | 검토된 장치에 Ceph OSD 생성 | 지정한 물리 디스크 삭제 |
 | `cluster.sh prepare-k8s-cloud` | management K8s용 non-admin 사용자와 application credential 생성 | OpenStack 사용자·credential과 로컬 secret |
@@ -200,6 +205,55 @@ Ceph 스크립트는 LVM 볼륨, Glance 이미지, VM ephemeral disk를 옮기�
 설정을 검토한 뒤 최초 배포한다. 이 절차를 운영 중인 LVM 클라우드에 적용하지 않는다.
 
 ## OpenStack 자원과 Kubernetes 경계
+
+`terraform/openstack/`은 management Kubernetes와 공용 기반 자원의 root/state다. 일반 VM을
+여기에 추가하면 Kubernetes 변경과 애플리케이션 VM 변경이 같은 plan과 state에 섞이므로,
+일반 VM은 `terraform/workloads/<stack>/`의 독립 root로 관리한다. 공통 모듈과 서비스별 구조는
+[서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)에 정리되어 있다.
+
+workload 스택 이름은 `^[a-z0-9][a-z0-9-]{0,62}$` 형식의 1∼63자만 허용한다. `_template`
+자체와 기존 경로는 생성 대상으로 받을 수 없다. `workload-new`가 만든 `terraform.tfvars`는
+mode `0600`이며 첫 검사는 `enable_instances = false` 상태에서 수행한다. OpenStack CLI로
+인증과 조회 권한을 먼저 확인하고, 조회한 network·subnet·image UUID와 Nova flavor ID를 입력한다.
+첫 Terraform plan이 자원 생성을 포함하지 않는지 확인한 뒤에만 활성화한다.
+
+workload wrapper는 기본 Terraform workspace와 고정 `terraform.tfvars`만 허용한다.
+`TF_CLI_ARGS*`, `TF_DATA_DIR`, `TF_REATTACH_PROVIDERS`, `TF_WORKSPACE`, `TF_VAR_*`, ignored auto
+tfvars와 override 파일은 state 경로, locking 또는 검토 입력을 우회할 수 있으므로 거부한다.
+
+`workload-plan`은 임시 파일에 성공적으로 만든 plan을 mode `0600`으로 원자 교체해
+`.cache/terraform/workloads/<stack>.tfplan`에 저장한다. plan SHA-256과 현재 OpenStack
+credential/config 환경의 지문은 같은 경로의 `<stack>.tfplan.context.json`에 mode `0600`으로
+저장한다. 지문에는 provider가 workload root, 사용자 config, `/etc/openstack`에서 실제 선택하는
+secure/public cloud 파일과 YAML이 참조하는 절대경로 인증서·키 내용도 들어간다.
+`workload-show`가 `terraform init` 전에 동일한 context임을 확인하고 표시한 정확한 plan을
+검토한 뒤 다음 형식의 출력값을 현재 shell에 설정한다.
+
+```text
+TERRAFORM_WORKLOAD_APPLY_CONFIRM=APPLY-TERRAFORM-WORKLOAD:<stack>:<plan-sha256>
+```
+
+`workload-apply`는 workload 스택이 공유하는 Terraform lock을 얻고 plan의 현재 SHA-256과
+credential context를 다시 확인한 뒤 정확히 일치하는 저장 plan만 `parallelism=1`로 적용한다.
+Terraform도 state가 plan 이후 바뀌었으면 stale plan을 거부한다. 코드, 변수, credential 또는
+실제 자원 조건이 달라졌다면 적용을 반복하지 말고 새 plan을 만들고 다시 검토한다.
+`workload-output`은 해당 root가 구성한 backend에서 출력을 조회한다. 이 wrapper lock은 한
+checkout 안에서만 동작하므로 여러 checkout이나 운영자는 locking을 지원하는 remote backend를
+사용해야 한다.
+
+각 스택의 `instances` map key는 Terraform 주소이므로 운영 중 이름을 바꾸지 않는다. key 삭제,
+`enable_instances = false` 전환과 VM·root volume 교체는 두 자원의 삭제를 계획하지만 공통
+모듈의 `prevent_destroy`가 적용을 차단한다. Port, security group과 Floating IP에는 같은 보호가
+없으므로 plan에서 교체·삭제를 따로 확인한다. 자동 `workload-destroy` 명령은 제공하지 않는다.
+의도적인 폐기는 데이터 이전·백업·복원 시험을 먼저 끝낸다. 그다음 정확한 스택과 key,
+lifecycle 보호 처리, Terraform resource 주소, 실제 삭제 대상과 복구 방법을 명시한 별도 변경을
+검토해야 한다. 이 저장소는 범용 폐기 명령이나 자동 절차를 제공하지 않으며 `terraform destroy`,
+`state rm` 또는 `-target`을 표준 폐기 절차로 자동화하지 않는다.
+
+workload state, `terraform.tfvars`와 cloud credential은 Git에 포함하지 않고 암호화해 백업한다.
+cloud-init secret은 plan과 state에도 남을 수 있으므로 비밀번호, 장기 token, SSH 개인키와
+application credential secret을 넣지 않는다. 구체적인 파일 목록은
+[로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를 따른다.
 
 Terraform은 `enable_resources=false`가 기본이다. `terraform-plan`이 저장한 계획을 검토한
 뒤 다음 확인 문자열로 같은 계획을 적용한다.

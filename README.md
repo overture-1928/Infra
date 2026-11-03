@@ -5,7 +5,8 @@
 5노드·7노드 등으로 확장하는 자동화를 제공한다. 5노드나 7노드에서도
 `cloud01`∼`cloud03`의 control·network 역할을 유지하고 나머지 노드를 compute와 선택적인
 Ceph OSD 용도로 추가하는 배치를 권장한다. OpenStack 위의 Kubernetes 인프라는
-Terraform으로 만들고 Kubespray로 설치한다.
+Terraform으로 만들고 Kubespray로 설치한다. 일반 VM은 서비스별
+`terraform/workloads/<stack>/` root와 state로 분리해 관리한다.
 
 ```mermaid
 flowchart TB
@@ -358,6 +359,26 @@ OVN provider를 사용하며, 한 노드 설치에서는 Octavia를 켜지 않�
 [Kolla-Ansible Neutron OVN 문서](https://docs.openstack.org/kolla-ansible/latest/reference/networking/neutron.html)와
 [Octavia OVN provider 문서](https://docs.openstack.org/kolla-ansible/latest/reference/networking/octavia.html)다.
 
+## 일반 VM Terraform 스택
+
+`terraform/openstack/`은 management Kubernetes와 공용 기반 자원 전용으로 유지한다. 일반
+애플리케이션 VM은 `terraform/workloads/_template/`에서 서비스별 root를 만들며, 각 root가
+독립된 변수와 state를 가진다. 같은 서비스의 replica는 한 `instances` map에 두고 배포·백업·
+폐기 주기가 다른 서비스는 별도 스택으로 나눈다.
+
+첫 plan은 `enable_instances = false`로 credential 파일 선택, provider와 입력을 확인하고,
+실제 OpenStack 자원 ID와 생성 계획을 검토한 뒤 활성화한다. 저장된 plan은 credential context와
+결합되며 다음 형태의 SHA-256 확인 문자열로만 적용된다.
+
+```text
+APPLY-TERRAFORM-WORKLOAD:<stack>:<plan-sha256>
+```
+
+state, `terraform.tfvars`와 credential은 Git에서 제외하고 암호화해 백업한다. VM과 root
+volume에는 `prevent_destroy`가 적용되며 자동 destroy 명령은 제공하지 않는다. 디렉터리 구조,
+자원 ID 조회, VM 추가, map key와 의도적인 폐기 절차는
+[서비스별 OpenStack VM Terraform 스택](docs/terraform-workloads.md)을 따른다.
+
 ## 실행 진입점
 
 처음 설치하는 순서는 [설치 런북](docs/openstack-runbook.md)에 있다. 주요 명령은 다음과 같다.
@@ -378,6 +399,11 @@ OVN provider를 사용하며, 한 노드 설치에서는 Octavia를 켜지 않�
 | `sudo ./scripts/cluster.sh verify-openstack` | API와 등록된 OpenStack 서비스 확인 |
 | `./scripts/cluster.sh terraform-plan` | Kubernetes VM 인프라 계획 저장 |
 | `./scripts/cluster.sh terraform-apply` | 확인된 Terraform 계획 적용 |
+| `./scripts/cluster.sh workload-new <stack>` | 템플릿에서 독립적인 일반 VM 스택 생성 |
+| `./scripts/cluster.sh workload-plan <stack>` | 해당 스택의 plan 저장과 적용 확인 문자열 출력 |
+| `./scripts/cluster.sh workload-show <stack>` | 저장된 workload plan 상세 검토 |
+| `./scripts/cluster.sh workload-apply <stack>` | SHA-256으로 확인한 같은 plan을 직렬 적용 |
+| `./scripts/cluster.sh workload-output <stack>` | 해당 스택의 적용된 Terraform 출력 조회 |
 | `./scripts/cluster.sh deploy-kubernetes` | Kubespray 설치 또는 확장 |
 | `./scripts/cluster.sh prepare-k8s-cloud` | management K8s용 전용 non-admin 사용자와 credential 생성 |
 | `sudo ./scripts/cluster.sh platform-plan` | 3노드·Ceph·management K8s 사전 검사와 확인 문자열 출력 |

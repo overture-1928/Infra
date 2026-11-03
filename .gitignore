@@ -1,6 +1,7 @@
 # Terraform state, local variables and CLI credentials
 *.tfstate
 *.tfstate.*
+.terraform.tfstate.lock.info
 .terraform/
 *.tfplan
 *.auto.tfvars

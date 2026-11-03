@@ -21,6 +21,7 @@ Git에서 제외되는 로컬 입력 파일과 자동 생성되는 비밀 파일
 | `inventory/openstack-plan.local.yml` | `inventory/openstack-plan.yml` | 실제 관리·Provider·tenant 망, Floating IP 범위, 초기화 대상과 보호 대상 디스크 시리얼, 파티션과 VG 계획 |
 | `inventory/openwrt-router.local.yml` | `inventory/openwrt-router.example.yml` | OpenWrt 주소와 계정, SSH 키 **경로**, discovery에서 확인한 모델·버전·DSA bridge·포트, 실제 VLAN과 망 계획 |
 | `terraform/openstack/terraform.tfvars` | `terraform/openstack/terraform.tfvars.example` | 실제 Provider·tenant·관리망, gateway·DNS·Floating IP 범위, SSH 공개키, Kubernetes VM 주소·역할·볼륨 |
+| `terraform/workloads/<stack>/terraform.tfvars` | `terraform/workloads/_template/terraform.tfvars.example` | 서비스 VM의 OpenStack UUID, 허용 CIDR, `instances` map과 선택적 Floating IP 설정 |
 | `inventory/openstack-cluster.ceph.local.yml` | `inventory/openstack-cluster.local.yml` | Ceph 전환 때 실제 3노드 값에서 분기해 사용하는 OSD 토폴로지. 운영 LVM 입력과 분리 |
 | `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | GPU/HBA 패스스루를 사용할 때 확인한 PCI vendor/product ID와 alias |
 
@@ -61,8 +62,15 @@ Ceph 전용 파일은 공개 예시가 아니라 실제 3노드 값이 검토된
 `enabled: false`를 유지한다. `terraform.tfvars`에서는 RFC 5737 예시 주소를 모두 실제 로컬
 인벤토리의 주소로 바꾸고 `enable_resources = false` 상태에서 첫 plan을 확인한다.
 
+일반 VM 스택은 `cluster.sh workload-new <stack>`으로 만든다. 명령이 생성한
+`terraform/workloads/<stack>/terraform.tfvars`도 mode `0600`으로 유지하며 첫 plan까지
+`enable_instances = false`로 둔다. 서비스별 state를 섞지 않으며 자세한 생성·적용 절차는
+[서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)을 따른다.
+
 실제 비밀번호, OpenStack application credential secret, kubeconfig 내용과 SSH 개인키 본문은
-이 입력 파일에 적지 않는다.
+이 입력 파일에 적지 않는다. cloud-init user data에도 비밀번호, 장기 token, SSH 개인키나
+application credential secret을 넣지 않는다. 해당 내용은 Terraform plan과 state에 복사될 수
+있다. 추적되는 cloud-init 예시에는 비밀 없는 초기 설정만 둔다.
 
 ## 저장소 밖에 두는 키와 시스템 파일
 
@@ -89,6 +97,8 @@ SSH 개인키는 mode `0600`, `.ssh` 디렉터리는 `0700`으로 유지한다. 
 | `terraform/openstack/clouds.yaml` | `/etc/kolla/clouds.yaml`의 mode `0600` 로컬 복사본 | 관리자 credential이므로 제한된 접근과 암호화 백업 |
 | `secure.yaml`, `secure.yml`, `secure.json` | 사용자가 선택적으로 만들며 OpenStackSDK가 `clouds.yaml`과 병합해 읽는 credential 파일. 이 저장소는 생성하지 않음 | 사용한다면 mode `0600`과 암호화 백업을 적용하고 Git에 포함하지 않음 |
 | `terraform/openstack/terraform.tfstate*` | Terraform이 관리하는 OpenStack 자원 결합 상태 | 유실하면 자동 복구되지 않고 import가 필요하므로 필수 백업 |
+| `terraform/workloads/<stack>/terraform.tfstate*` | 해당 서비스 VM·포트·볼륨과 Terraform resource 주소의 결합 상태 | 스택별로 코드 commit과 함께 암호화 백업. 유실 시 빈 state를 적용하지 않고 복원 또는 import |
+| `terraform/workloads/<stack>/terraform.tfvars` | 해당 서비스가 참조하는 OpenStack UUID와 VM 사양 | mode `0600` 유지, state와 같은 복구 세트로 암호화 백업 |
 | `kubeconfig/admin.conf` | Kubespray가 만든 management Kubernetes 관리자 kubeconfig | cluster-admin credential로 취급하고 필수 백업 |
 | `kubeconfig/openstack-management.env` | 전용 OpenStack application credential의 한 번만 반환되는 secret | 자동화가 기존 credential을 교체하지 않으므로 필수 백업 |
 | `kolla/generated/magnum/kubeconfig` | Magnum용 장기 ServiceAccount token kubeconfig | management cluster 복구 세트에 포함 |
@@ -105,6 +115,9 @@ Kolla MariaDB 백업, Cinder 볼륨, Glance 이미지와 Ceph MON 데이터는 �
 
 - `.cache/`의 CLI, Python 환경, 다운로드 파일과 렌더링 결과
 - `.terraform/`의 provider 캐시와 `*.tfplan`
+- `.terraform.tfstate.lock.info`의 실행 중 local state 잠금 정보
+- `.cache/terraform/workloads/`의 저장된 workload plan과 `.tfplan.context.json`. 재생성
+  가능하지만 plan에는 민감한 값이 포함될 수 있으므로 공개하거나 Git에 추가하지 않음
 - `kolla/inventory/multinode.local`, `kolla/generated/multinode`, `globals.yml`
 - `.cache/cluster/`, `.cache/ceph/`, `.cache/kubespray-inventory/`의 plan과 manifest
 - `ubuntu-autoinstall/generated/`의 user-data, meta-data와 seed ISO
@@ -117,14 +130,17 @@ Autoinstall 결과는 재생성할 수 있지만 보관 중에는 암호 해시,
 `UBUNTU_OPERATOR_PASSWORD_HASH`와 `UBUNTU_OPERATOR_SSH_PUBLIC_KEY`는 Autoinstall을 렌더링하는
 현재 shell에만 설정한다. `OPENSTACK_CLUSTER_CONFIG`, `OPENSTACK_PLAN_CONFIG`,
 `OPENWRT_INVENTORY`, `OS_CLIENT_CONFIG_FILE`, `MANAGEMENT_KUBECONFIG`는 로컬 파일을 선택하는
-변수다. `OS_CLOUD`는 `OS_CLIENT_CONFIG_FILE`이 가리키는 `clouds.yaml` 안의 cloud 이름을
-선택한다.
+변수다. OpenStack CLI에서는 `OS_CLOUD`가 `OS_CLIENT_CONFIG_FILE`이 가리키는 `clouds.yaml`
+안의 cloud 이름을 선택한다. workload Terraform provider가 사용할 항목은 각 스택의
+`cloud_name` 변수로 지정한다. plan context는 현재 `OS_*` 환경도 함께 지문화하므로 인증 환경을
+바꿨다면 새 workload plan을 만든다.
 
 `OPENSTACK_STORAGE_CONFIRM`, `OPENWRT_*_CONFIRM`, `CEPH_*_CONFIRM`,
 `TERRAFORM_APPLY_CONFIRM`, `OPENSTACK_EXPAND_CONFIRM`, `MANAGEMENT_CLOUD_CONFIRM`과
-`PLATFORM_SERVICES_CONFIRM`, `KUBERNETES_CONTROL_PLANE_SCALE_CONFIRM`은 비밀번호가 아니라 변경
-승인 문자열이다. 매번 새 plan이 출력한 값을 검토한 뒤 현재 shell에서만 설정하고 장기 설정
-파일에 저장하지 않는다.
+`PLATFORM_SERVICES_CONFIRM`, `KUBERNETES_CONTROL_PLANE_SCALE_CONFIRM`,
+`TERRAFORM_WORKLOAD_APPLY_CONFIRM`은 비밀번호가 아니라 변경 승인 문자열이다. workload 적용은
+`APPLY-TERRAFORM-WORKLOAD:<stack>:<plan-sha256>` 형식의 출력값을 사용한다. 매번 새 plan이
+출력한 값을 검토한 뒤 현재 shell에서만 설정하고 장기 설정 파일에 저장하지 않는다.
 
 `.env`와 `.env.*`는 Git에서 제외되지만 이 저장소의 스크립트는 자동으로 읽지 않는다. 로컬
 환경 파일을 사용하는 경우 직접 `source`해야 하며, 장기 credential은 평문 환경 파일 대신
@@ -149,6 +165,8 @@ git check-ignore -v \
   inventory/openstack-plan.local.yml \
   inventory/openwrt-router.local.yml \
   terraform/openstack/terraform.tfvars \
+  terraform/workloads/example/terraform.tfvars \
+  terraform/workloads/example/terraform.tfstate \
   terraform/openstack/clouds.yaml \
   kolla/config/nova/nova-compute.conf \
   secure.yaml \
@@ -169,4 +187,5 @@ credential이 원격 저장소에 한 번이라도 올라갔다면 Git에서 삭
 세부 생성 순서는 [OpenStack 설치 런북](openstack-runbook.md), OpenWrt 입력은
 [OpenWrt Provider VLAN 자동화](openwrt-router.md), Ceph 전환 입력과 keyring은
 [Ceph 전환](ceph-transition.md), management credential과 kubeconfig는
-[Magnum CAPI 관리형 서비스](managed-services.md)를 따른다.
+[Magnum CAPI 관리형 서비스](managed-services.md), 일반 VM의 독립 state는
+[서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)을 따른다.
