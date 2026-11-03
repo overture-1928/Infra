@@ -7,56 +7,211 @@
 Application credential, kubeconfig와 Terraform 상태의 보관·백업 기준은
 [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를 따른다.
 
-## 전체 계층과 요청 흐름
+## Management Kubernetes 부트스트랩
+
+Management Kubernetes는 CAPO가 만드는 대상이 아니다. Terraform이 OpenStack에 기반 VM과
+네트워크를 먼저 만들고, Kubespray가 그 VM에 Kubernetes를 설치한다. 아래 그림의 실선은 현재
+자동화된 경로이며, 파일 이름은 Git에서 제외해 로컬에 보관하는 인증·상태 파일이다.
 
 ```mermaid
 flowchart TB
-    user["사용자 · 운영자"]
-    bootstrap["Terraform + Kubespray<br/>management cluster 구성"]
+    operator["운영자 · cloud01의 저장소"]
 
-    subgraph openstack["OpenStack 기반 계층"]
-        portal["Skyline · OpenStack API"]
-        magnum["Magnum API<br/>magnum-capi driver"]
-        iaas["Nova · Neutron · Cinder · Glance<br/>Octavia · Barbican · Ceph"]
+    subgraph local["로컬 자동화와 보호 파일"]
+        admincloud["admin clouds.yaml<br/>/etc/kolla 또는 terraform/openstack<br/>OpenStack 관리 작업용"]
+        tf["Terraform<br/>terraform-plan / terraform-apply"]
+        appbuilder["prepare-k8s-cloud<br/>전용 member 사용자와<br/>restricted application credential 생성"]
+        appenv["kubeconfig/openstack-management.env<br/>mode 0600 · secret 출력 안 함"]
+        kubespray["Kubespray<br/>deploy-kubernetes"]
+        adminconf["kubeconfig/admin.conf<br/>management cluster 관리자 kubeconfig"]
+        platform["platform-plan / platform-apply<br/>CAPI · CAPO · ORC 설치"]
     end
 
-    subgraph management["Management Kubernetes · OpenStack VM 3대"]
-        mgmtvms["control-plane VM 3대"]
-        endpoint["HA API endpoint<br/>cluster.api_vip:6443"]
-        controllers["CAPI core · kubeadm providers<br/>CAPO · ORC controllers"]
+    subgraph osapi["OpenStack service catalog · 관리 API"]
+        keystone["Keystone<br/>token · 사용자 · application credential"]
+        computeapi["Nova · Neutron · Cinder · Glance"]
+        octaviaapi["Octavia OVN<br/>LoadBalancer API"]
+        barbicanapi["Barbican<br/>secret API"]
     end
 
-    subgraph workload["OpenStack tenant의 관리형 Kubernetes"]
-        resources["VM · network · volume<br/>load balancer"]
-        cluster["workload control plane<br/>worker nodes"]
+    subgraph infra["Terraform이 만드는 management cluster 기반"]
+        tnet["tenant network · subnet · security group"]
+        cpvms["control-plane VM 3대<br/>boot volume · port"]
+        fips["control-plane Floating IP 3개"]
     end
 
-    hostedplan["hosted-plan<br/>로컬 renderer"]
-    hosted["K0smotron YAML 초안<br/>설치·적용은 아직 하지 않음"]
+    subgraph management["Management Kubernetes"]
+        apiservers["kube-apiserver 3대"]
+        internalvip["tenant 내부 kube-vip<br/>VM과 cluster 내부용 :6443"]
+        addons["external OpenStack CCM<br/>Cinder CSI · Octavia integration"]
+        providers["CAPI core · kubeadm bootstrap/control-plane<br/>CAPO · ORC controllers"]
+    end
 
-    user --> portal
-    user -->|"cluster 생성·확장·삭제 요청"| magnum
-    portal --> iaas
-    iaas -->|"management VM · network · volume"| mgmtvms
-    bootstrap -->|"VM 설정 · Kubernetes 설치"| mgmtvms
-    mgmtvms --> endpoint
+    bootstrapfip["최초 control-plane FIP :6443<br/>Kubespray bootstrap와 admin.conf 접속점"]
+    finalapi["Magnum이 접속할 최종 HA endpoint<br/>cluster.api_vip:6443"]
+    haproxy["Kolla HAProxy listener<br/>backend = control-plane FIP 3개"]
 
-    magnum -->|"ServiceAccount kubeconfig"| endpoint
-    endpoint -->|"Cluster API 리소스"| controllers
-    controllers -->|"OpenStack API 호출"| iaas
-    iaas --> resources
-    controllers -->|"원하는 cluster 상태로 조정"| cluster
-    resources --> cluster
+    operator --> admincloud
+    admincloud -->|"admin API 인증"| tf
+    tf --> computeapi
+    computeapi --> tnet
+    computeapi --> cpvms
+    computeapi --> fips
 
-    hostedplan -.->|"hosted_control_plane=true일 때 render"| hosted
-    hosted -.->|"향후 management cluster에 적용할 설계"| controllers
+    admincloud -->|"현재 project와 domain 확인"| appbuilder
+    appbuilder -->|"사용자 · role · credential"| keystone
+    appbuilder --> appenv
+    operator --> kubespray
+    cpvms -->|"SSH 대상"| kubespray
+    appenv -->|"OS_APPLICATION_CREDENTIAL_*"| kubespray
+    kubespray --> apiservers
+    kubespray --> addons
+    kubespray --> adminconf
+    kubespray --> internalvip
+
+    fips --> bootstrapfip
+    bootstrapfip --> apiservers
+    tnet --> internalvip
+    internalvip --> apiservers
+    adminconf -->|"MANAGEMENT_KUBECONFIG"| platform
+    platform --> providers
+    platform --> haproxy
+    platform -.->|"Kolla 서비스 배포"| octaviaapi
+    platform -.->|"Kolla 서비스 배포"| barbicanapi
+    finalapi --> haproxy
+    haproxy --> fips
+    appenv -->|"project 범위 OpenStack API"| addons
+    addons --> computeapi
+    addons --> octaviaapi
 ```
 
-Management Kubernetes는 Terraform과 Kubespray로 먼저 만드는 운영 기반이며 CAPO가 자기 자신을
-만드는 구조가 아니다. 이후 Magnum API가 받은 cluster 요청을 `magnum-capi` driver가 management
-Kubernetes의 Cluster API 리소스로 전달한다. CAPI, kubeadm provider, CAPO와 ORC controller는
-그 리소스를 보고 OpenStack API를 호출해 workload cluster용 VM, 네트워크, 볼륨과 load
-balancer를 만든다. 그림의 점선 `hosted-plan` 경로는 검토용 manifest 생성까지만 구현되어 있다.
+`kubeconfig/openstack-management.env`는 management cluster 안의 CCM·Cinder CSI·Octavia 연동이
+OpenStack API를 호출할 때 쓰는 project 범위 application credential이다. 반면
+`kubeconfig/admin.conf`는 `platform-services.sh`가 management Kubernetes API에 CAPI provider를
+설치할 때 쓰는 Kubernetes 관리자 인증이다. 두 인증은 용도와 회전 절차가 다르다.
+
+Kubespray 부트스트랩과 로컬 `admin.conf`는 첫 control-plane Floating IP를 사용한다. 플랫폼
+적용 후 Kolla HAProxy가 `cluster.api_vip:6443`에서 세 control-plane Floating IP로 분산하고,
+Magnum용 kubeconfig는 이 HA endpoint를 사용한다. Tenant 내부의 kube-vip는 management VM과
+Pod가 같은 tenant network 안에서 API에 접근할 때 쓰는 별도 주소다.
+
+## Magnum 요청과 CAPI 조정 루프
+
+사용자의 요청은 Magnum에서 끝나지 않는다. `magnum-capi` driver가 management cluster에 원하는
+상태를 기록하고, 여러 controller가 OpenStack의 실제 자원 상태를 계속 관찰하며 일치시킨다.
+
+### 요청과 인증 경계
+
+```mermaid
+flowchart LR
+    user["사용자 · 자체 포털<br/>OpenStack CLI/API"]
+    keystone["Keystone<br/>project · role · quota"]
+
+    subgraph magnumsvc["OpenStack control plane"]
+        magapi["Magnum API"]
+        conductor["Magnum conductor<br/>k8s_cluster_api / magnum-capi driver"]
+        sakubeconfig["kolla/generated/magnum/kubeconfig<br/>→ /etc/kolla/config/magnum/kubeconfig<br/>ServiceAccount token · HA API :6443"]
+        barbican["Barbican<br/>certificate · secret"]
+    end
+
+    subgraph mgmtapi["Management Kubernetes API · desired state 저장"]
+        desired["CAPI 객체<br/>Cluster · KubeadmControlPlane · MachineDeployment<br/>OpenStackCluster · OpenStackMachineTemplate"]
+        projectauth["workload project 범위<br/>OpenStack 인증 Secret / 참조"]
+    end
+
+    user -->|"cluster 생성 · 확장 · 삭제"| keystone
+    keystone -->|"token"| magapi
+    magapi --> conductor
+    sakubeconfig -.->|"Kubernetes API 인증"| conductor
+    conductor -->|"create · update · delete"| desired
+    conductor --> projectauth
+    conductor -->|"인증서·secret 처리"| barbican
+```
+
+### Controller가 OpenStack 자원을 만드는 경로
+
+```mermaid
+flowchart TB
+    desired["Management API의 원하는 상태 CR"]
+    projectauth["workload project 인증 Secret / 참조"]
+
+    subgraph reconcilers["Management cluster의 지속 조정 controller"]
+        direction LR
+        capi["CAPI core<br/>Cluster · Machine lifecycle"]
+        kubeadm["kubeadm providers<br/>bootstrap data · control plane"]
+        capo["CAPO<br/>OpenStackCluster · OpenStackMachine"]
+        orc["ORC<br/>OpenStack Server · Image CR"]
+    end
+
+    subgraph catalog["OpenStack API endpoints"]
+        direction LR
+        computenet["Nova · Neutron<br/>server · network · port · security group"]
+        storageimage["Cinder/Ceph · Glance<br/>boot/data volume · Kubernetes image"]
+        loadbalancer["Octavia OVN<br/>workload API LoadBalancer"]
+    end
+
+    subgraph workload["OpenStack tenant의 workload Kubernetes"]
+        resources["VM · port · volume · image · load balancer"]
+        controlplane["workload control plane"]
+        workers["worker nodes"]
+        workloadapi["workload Kubernetes API · Ready 상태"]
+    end
+
+    desired --> capi
+    desired --> kubeadm
+    desired --> capo
+    projectauth --> capo
+    projectauth --> orc
+    capi <-->|"owner reference · phase"| kubeadm
+    capi <-->|"Machine와 infrastructure 연결"| capo
+    capo <-->|"Server · Image CR"| orc
+
+    capo --> computenet
+    capo --> storageimage
+    capo --> loadbalancer
+    orc --> computenet
+    orc --> storageimage
+    computenet --> resources
+    storageimage --> resources
+    loadbalancer --> resources
+    resources --> controlplane
+    resources --> workers
+    controlplane --> workloadapi
+    workers --> workloadapi
+```
+
+### 관찰과 상태 반환 루프
+
+```mermaid
+flowchart LR
+    desired[("Management Kubernetes etcd<br/>desired CR + status")]
+    reconcilers["CAPI · kubeadm · CAPO · ORC<br/>reconcile loop"]
+    openstack["OpenStack 실제 상태<br/>VM · network · volume · image · LB"]
+    workload["workload Kubernetes<br/>API · node health · replica"]
+    condition["CAPI conditions<br/>Ready · replicas · failure reason"]
+    conductor["Magnum conductor<br/>cluster 상태 변환"]
+    magapi["Magnum API<br/>CREATE_IN_PROGRESS → COMPLETE/FAILED"]
+    user["사용자<br/>같은 cluster UUID로 조회"]
+
+    desired --> reconcilers
+    reconcilers -->|"OpenStack API 호출"| openstack
+    openstack -.->|"실제 자원 관찰"| reconcilers
+    workload -.->|"health 관찰"| reconcilers
+    reconcilers --> condition --> desired
+    condition -.-> conductor -.-> magapi -.-> user
+    restart["controller 재시작"] -.->|"desired state에서 재개"| reconcilers
+```
+
+실선은 생성·변경 명령과 자원 의존성이고, 점선은 실제 상태를 다시 읽어 Magnum까지 올리는
+관찰 경로다. Controller가 중단됐다가 다시 시작되어도 management Kubernetes에 저장된 CR의
+원하는 상태를 기준으로 조정을 재개한다. OpenStack API가 일시적으로 실패하면 CAPI condition과
+Magnum 상태에 원인이 남으며, 사용자는 같은 cluster UUID를 통해 진행 상황을 확인한다.
+
+요청 그림에는 세 인증 경계가 있다. 사용자의 Keystone token은 Magnum API 요청을 인증하고,
+`magnum-capi` ServiceAccount kubeconfig는 Magnum conductor가 management Kubernetes API에
+접속할 때 사용한다. Workload project의 OpenStack 인증 참조는 CAPO·ORC가 그 project에 VM과
+네트워크를 조정하기 위한 것으로, management cluster 자체 CCM·CSI가 사용하는
+`openstack-management.env`와는 별개다.
 
 ## 3노드 이후 활성화 순서
 
@@ -177,6 +332,52 @@ Terraform의 세 control-plane Floating IP를 backend로 사용한다. Kubespray
 초안을 `.cache/platform/`에 만든다. 실제 K0smotron 설치나 리소스 적용은 하지 않는다.
 Hosted control plane의 etcd 저장소, LoadBalancer endpoint, CAPO worker와 복구 절차를 검토한
 후 별도 적용 자동화를 추가해야 한다.
+
+```mermaid
+flowchart TB
+    subgraph current["현재 provider와 Magnum workload 경로"]
+        capi["CAPI core · kubeadm providers<br/>CAPO · ORC"]
+        kcp["KubeadmControlPlane"]
+        cpvm["workload control-plane VM 3대<br/>OpenStack Nova"]
+        md["MachineDeployment"]
+        workervm["workload worker VM"]
+
+        capi --> kcp
+        kcp --> cpvm
+        capi --> md
+        md --> workervm
+    end
+
+    flag["hosted_control_plane: true"]
+    plan["cluster.sh hosted-plan"]
+    rendered[".cache/platform/k0smotron-*.yml<br/>Cluster + K0smotronControlPlane 초안"]
+    boundary["자동화 경계<br/>여기서 중단 · kubectl apply 안 함"]
+
+    subgraph future["향후 별도 설계·검증 후 가능한 구조"]
+        operator["K0smotron operator<br/>현재 설치하지 않음"]
+        hostedcp["management cluster 안의<br/>hosted control-plane Pod"]
+        etcdpvc["etcd PVC<br/>비로컬 기본 StorageClass · Ceph"]
+        apiLB["workload API Service<br/>Octavia OVN LoadBalancer"]
+        futurecapi["CAPI · CAPO<br/>별도 worker manifest 필요"]
+        capoworker["MachineDeployment<br/>OpenStack worker VM"]
+
+        operator -.-> hostedcp
+        hostedcp -.-> etcdpvc
+        hostedcp -.-> apiLB
+        futurecapi -.-> capoworker
+    end
+
+    flag -.-> plan
+    plan -.-> rendered
+    rendered -.-> boundary
+    boundary -.->|"현재는 통과하지 않음"| operator
+```
+
+왼쪽 실선은 `platform-apply`가 provider를 준비한 뒤 Magnum 요청이 사용하는 일반 workload
+경로다. 오른쪽 점선은 manifest 렌더링 뒤의 미래 설계다. K0smotron operator, hosted control
+plane, PVC, LoadBalancer와 CAPO worker를 현재 자동화가 생성한다고 해석하면 안 된다. 특히
+management cluster 장애가 workload control plane 장애로 이어지는 범위와 etcd PVC 복구를
+먼저 검증해야 한다.
 
 ```bash
 export HOSTED_K0S_VERSION='v1.36.0+k0s.0'

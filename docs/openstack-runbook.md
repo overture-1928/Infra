@@ -7,23 +7,64 @@
 먼저 확인한다.
 
 ```mermaid
-flowchart TD
-  A["1. 장비와 디스크 시리얼 확인"] --> B["로컬 인벤토리 작성"]
-  B --> C["2. 작업 PC에서 Autoinstall seed 생성"]
-  C --> D{"로컬 설정·seed·SSH 키<br/>외부 백업과 복원 확인"}
-  D --> E{"설치 화면에서<br/>OS SSD 시리얼 재확인"}
-  E --> F["Ubuntu Server 24.04 설치"]
-  F --> G["cloud01에서 저장소 clone<br/>로컬 설정과 SSH 키 복원"]
-  G --> H["3. validate · setup · render"]
-  H --> I["4. prepare-hosts · 재부팅"]
-  I --> J["5. OpenWrt plan · 확인값 · apply"]
-  J --> K{"6. 스토리지 dry-run과<br/>디스크 시리얼 재확인"}
-  K --> L["확인값으로 데이터 SSD와 NVMe 초기화"]
-  L --> M["verify-hosts"]
-  M --> N["7. Kolla-Ansible OpenStack 배포"]
-  N --> O["8. Terraform plan · 확인값 · apply"]
-  O --> P["9. Kubespray management/hosting Kubernetes"]
-  P -.->|"3노드·Ceph·복구 검증 후"| Q["10. Magnum/CAPI 플랫폼"]
+flowchart TB
+  subgraph WORKSTATION["설치 전 Ubuntu 작업 PC"]
+    W1["operator + sudo<br/>1. 하드웨어·MAC·디스크 시리얼 조사"]
+    W2["operator<br/>두 inventory/*.local.yml 작성"]
+    W3["operator<br/>2. Autoinstall user-data/meta-data 렌더링"]
+    W4["operator<br/>CIDATA seed ISO + SHA-256 생성"]
+    B0["외부 암호화 백업<br/>local.yml · seed/sha256 · SSH 개인키"]
+
+    W1 --> W2 --> W3 --> W4 --> B0
+  end
+
+  G0{"승인 게이트 · 복구 가능성<br/>외부 백업에서 대표 파일 복원 성공?"}
+  G1{"초기화 게이트 · OS SSD<br/>설치 화면 시리얼이 local.yml과 일치?"}
+  I1["Ubuntu installer<br/>128GB OS SSD 파티션 초기화·설치"]
+  R0["재부팅 1<br/>설치 미디어 제거 · 새 OS로 부팅"]
+
+  B0 --> G0 --> G1 --> I1 --> R0
+
+  subgraph OPERATOR["설치된 cloud01 · operator로 실행"]
+    O1["clone · local.yml/SSH 키 복원<br/>sudo -n과 sudoers 검사"]
+    O2["3. validate → setup → render"]
+    S1["생성 상태<br/>.cache/cluster/cluster-plan.json<br/>Ansible/Kolla inventory · globals.yml<br/>kolla/generated/passwords.yml"]
+    O3["4. prepare-hosts<br/>playbook 내부 become: true"]
+    R1["재부팅 2<br/>Netplan · IOMMU · host service 반영"]
+    O4["5. OpenWrt discover → plan<br/>uci.batch·plan.json 검토"]
+    G2{"확인 게이트 · 라우터<br/>정확한 APPLY-OPENWRT와<br/>CONFIRM-OPENWRT 값?"}
+    O5["OpenWrt apply<br/>rollback guard 설정 → router 검증<br/>모든 OpenStack host probe → confirm"]
+    S2["라우터 상태·백업<br/>.cache/openwrt/ plan.json·discovery.json·uci.batch<br/>state/openwrt/change-id/"]
+    O5B["verify-hosts<br/>호스트명·NIC·시간·mount·VG 검사"]
+    O6["8. Terraform plan<br/>enable_resources 검토 · tfplan 저장"]
+    G4{"확인 게이트 · OpenStack 자원<br/>저장된 계획 + APPLY-KUBERNETES-INFRA?"}
+    O7["Terraform apply -parallelism=1"]
+    S4["Terraform 상태<br/>network · router · FIP · volume · VM"]
+    O8["9. deploy-kubernetes<br/>Kubespray가 VM 안에 Kubernetes 설치"]
+    S5["Kubernetes 상태<br/>kubeconfig/admin.conf<br/>state/kubespray/.../applied-nodes.json"]
+  end
+
+  subgraph ROOT["설치된 cloud01 · sudo/root로 실행"]
+    X1["6. 스토리지 dry-run<br/>OS/data/fast 시리얼과 실제 경로 대조"]
+    G3{"초기화 게이트 · data SSD + NVMe<br/>WIPE-OPENSTACK-STORAGE:<br/>data-serial:fast-serial 정확히 일치?"}
+    X2["스토리지 --apply<br/>data SSD: Docker ext4 + cinder-ssd VG<br/>NVMe: cinder-nvme VG"]
+    R2["재부팅 3<br/>/var/lib/docker mount·LVM 확정"]
+    X4["7. deploy-openstack<br/>bootstrap → facts → precheck/pull<br/>deploy/post-deploy → config/check"]
+    X5["cloud-init<br/>Ubuntu 24.04 image를 Glance에 등록"]
+    X6["verify-openstack<br/>API·compute·network·Cinder·Skyline 검사"]
+    S3["OpenStack 비밀·접속 상태<br/>/etc/kolla/passwords.yml<br/>/etc/kolla/clouds.yaml"]
+  end
+
+  R0 --> O1 --> O2 --> S1 --> O3 --> R1
+  R1 --> O4 --> G2 --> O5 --> S2 --> X1
+  X1 --> G3 --> X2 --> R2 --> O5B --> X4 --> X5 --> X6 --> S3
+  S3 --> O6 --> G4 --> O7 --> S4 --> O8 --> S5
+  S5 -.->|"3노드·Ceph·복구 검증 후"| P1["10. Magnum + CAPI/CAPO 플랫폼"]
+
+  S1 -.->|"외부 secret backup 갱신"| B1["운영 백업<br/>passwords.yml · clouds.yaml · tfstate<br/>kubeconfig · Kubespray 적용 상태"]
+  S3 -.-> B1
+  S4 -.-> B1
+  S5 -.-> B1
 ```
 
 ## 1. cloud01 하드웨어 확인
@@ -237,20 +278,70 @@ export OPENWRT_CONFIRM='CONFIRM-OPENWRT:<plan이 출력한 실제 값>'
 따른다. 이 단계는 `br-ex`가 생기기 전인 지금 실행해야 한다.
 
 ```mermaid
-flowchart LR
-  ADMIN["관리자 PC"] --> MGMT["관리망 192.0.2.0/24<br/>native/untagged"]
-  MGMT --> HOST["cloud01 mgmt0<br/>192.0.2.2"]
-  MGMT --> API["OpenStack API VIP 192.0.2.10<br/>Skyline :9999"]
+flowchart TB
+  ADMIN["관리자 PC"]
+  CLIENT["외부 클라이언트"]
 
-  ROUTER["OpenWrt<br/>관리 192.0.2.1 · Provider 198.51.100.1"] --> MGMT
-  ROUTER --> TRUNK["관리형 스위치 trunk<br/>VLAN 10 tagged"]
-  TRUNK --> EXTIF["cloud01 mgmt0.10<br/>호스트 IP 없음"]
-  EXTIF --> BREX["Kolla br-ex<br/>flat / physnet1"]
-  BREX --> EXTERNAL["Neutron provider 망<br/>198.51.100.0/24"]
-  EXTERNAL --> NROUTER["Neutron router<br/>provider 주소 198.51.100.2"]
-  NROUTER --> TENANT["OVN tenant 논리망<br/>203.0.113.0/24"]
-  TENANT --> K8SVM["k8s-01 고정 IP 203.0.113.11<br/>Floating IP 198.51.100.50<br/>kube-vip API 203.0.113.10"]
+  subgraph L2["물리 L2와 OpenWrt"]
+    OPENWRT["OpenWrt<br/>관리 192.0.2.1<br/>Provider gateway 198.51.100.1"]
+    SWITCH["관리형 스위치 trunk<br/>native 관리망 + tagged VLAN 10"]
+  end
+
+  subgraph MANAGEMENT["관리/API 경로 · 192.0.2.0/24 · untagged"]
+    MGMT["cloud01 mgmt0<br/>192.0.2.2/24"]
+    VIP["Keepalived + HAProxy<br/>OpenStack API VIP 192.0.2.10"]
+    SKYLINE["Skyline :9999"]
+    API["Keystone · Nova · Neutron<br/>Glance · Cinder API"]
+    MGMT --> VIP
+    VIP --> SKYLINE
+    VIP --> API
+  end
+
+  subgraph PROVIDER["Provider ingress/egress · VLAN 10은 호스트 앞에서만 tagged"]
+    EXTIF["cloud01 mgmt0.10<br/>802.1Q VLAN 10 · 호스트 IP 없음"]
+    BREX["OVN br-ex<br/>physnet1 flat mapping"]
+    PUBLIC["Neutron public flat network<br/>198.51.100.0/24"]
+    FIP["Floating IP mapping<br/>198.51.100.50 ↔ 203.0.113.11"]
+    EXTIF --> BREX --> PUBLIC
+  end
+
+  subgraph TENANTPATH["OVN 논리 데이터 경로"]
+    LRP["OVN logical router<br/>외부 고정 IP 198.51.100.2<br/>DNAT/SNAT"]
+    LS["kubernetes logical switch/subnet<br/>203.0.113.0/24"]
+    BRINT["br-int + ovn-controller<br/>logical port flow"]
+    VMPORT["k8s-01 Neutron port<br/>203.0.113.11 + allowed-address 203.0.113.10"]
+    VM["k8s-01 VM<br/>SSH/서비스 + Kubernetes API :6443"]
+
+    PUBLIC --> LRP --> LS --> BRINT --> VMPORT --> VM
+    FIP -.->|"router의 주소 변환 규칙"| LRP
+  end
+
+  subgraph KUBEVIP["Kubernetes 내부 API VIP"]
+    RESERVED["unbound Neutron port<br/>203.0.113.10 주소 예약"]
+    KV["kube-vip<br/>VM에서 ARP로 203.0.113.10 광고"]
+    KAPI["kube-apiserver :6443"]
+    RESERVED -.->|"동일 VIP를 예약"| KV --> KAPI
+  end
+
+  subgraph OVERLAY["노드 확장 때의 east-west 경로"]
+    OVNCTRL["ovn-controller"]
+    TUNNEL["Geneve tunnel endpoint<br/>현재는 mgmt0 공유"]
+    OVNCTRL --> TUNNEL
+  end
+
+  ADMIN -- "SSH" --> MGMT
+  ADMIN -- "API/Skyline" --> VIP
+  CLIENT --> OPENWRT --> SWITCH
+  SWITCH -- "untagged 관리망" --> MGMT
+  SWITCH -- "VLAN 10 tagged" --> EXTIF
+  LS --> RESERVED
+  VMPORT --> KV
+  MGMT -.->|"확장 시 OVN tunnel traffic"| TUNNEL
 ```
+
+실선 화살표는 외부에서 VM으로 들어오는 경로를 기준으로 표시하며 응답 패킷은 역순으로
+돌아간다. 관리/API 트래픽과 Provider 트래픽은 스위치에서 같은 물리 포트를 사용하지만,
+Provider 트래픽만 VLAN 10 태그를 유지한 채 `mgmt0.10`으로 들어간다.
 
 ## 6. cloud01 OpenStack 스토리지 준비
 

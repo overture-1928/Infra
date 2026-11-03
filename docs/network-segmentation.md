@@ -3,9 +3,10 @@
 이 문서의 `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`는 공개 저장소를 위한
 RFC 5737 예시다. 실제 주소는 Git에서 제외되는 로컬 인벤토리에 기록한다.
 
-이 저장소는 한 물리 노드에서 시작해 세 노드로 확장한다. 처음부터 모든 트래픽에 별도
-물리 NIC를 요구하지 않는다. VLAN으로 보안과 브로드캐스트 영역을 먼저 나누고, 세 노드와
-Ceph를 도입할 때 저장 트래픽을 별도 NIC 또는 bond로 옮긴다.
+이 저장소는 한 물리 노드에서 시작해 3노드 HA를 만든 뒤 5·7노드 이상으로 확장할 수 있다.
+처음부터 모든 트래픽에 별도 물리 NIC를 요구하지 않는다. VLAN으로 보안과 브로드캐스트
+영역을 먼저 나누고, 3노드 이상과 Ceph를 도입할 때 저장 트래픽을 별도 NIC 또는 bond로
+옮긴다.
 
 ## 현재 한 노드 구성
 
@@ -21,58 +22,61 @@ Ceph를 도입할 때 저장 트래픽을 별도 NIC 또는 bond로 옮긴다.
 `203.0.113.0/24`는 물리 스위치에 만드는 VLAN이 아니다. OVN이 물리 underlay 위에 만드는
 프로젝트 논리망이다.
 
-## 트래픽 흐름 한눈에 보기
+## 현재 한 노드의 실제 경로
+
+다음 그림은 **지금 저장소가 자동으로 만드는 단일 노드 구성**이다. 관리·API와 OVN tunnel
+underlay가 모두 `mgmt0`을 쓰고, Provider VLAN만 `mgmt0.10`으로 분리된다. 호스트가 하나이므로
+OVN은 서로 다른 호스트 사이에 Geneve 패킷을 보낼 필요가 없다.
 
 ```mermaid
-flowchart LR
+flowchart TB
     admin["관리자 PC<br/>관리 LAN · VPN · bastion"]
     internet["외부망 / 인터넷"]
-    router["OpenWrt 또는 방화벽<br/>관리 gateway · Provider gateway"]
-    switch["관리형 스위치<br/>native + tagged trunk"]
 
-    subgraph host["OpenStack 호스트"]
-        mgmt["mgmt0<br/>native 관리망"]
-        api["SSH · OpenStack API<br/>VIP · Skyline"]
-        provider["mgmt0.10 → br-ex<br/>flat / physnet1"]
-        tunnel["tunnel interface<br/>현재 mgmt0 · 향후 VLAN 20"]
-        ovn["OVN 논리 스위치 · 라우터"]
-        storage["향후 storage NIC/bond<br/>VLAN 30"]
+    subgraph edge["라우터와 물리 스위치"]
+        router["OpenWrt / 방화벽<br/>관리 GW 192.0.2.1<br/>Provider GW 198.51.100.1"]
+        switch["관리형 스위치<br/>native 관리망 + tagged VLAN 10"]
     end
 
-    subgraph tenant["Tenant 논리망 203.0.113.0/24"]
-        vm1["VM / Kubernetes node"]
-        vm2["다른 호스트의 VM"]
+    subgraph cloud01["cloud01 · 현재 단일 OpenStack 노드"]
+        direction TB
+        mgmt["mgmt0 · native/untagged<br/>192.0.2.2/24<br/>기본 경로 있음"]
+        api["SSH · Kolla API · Skyline<br/>OpenStack VIP 192.0.2.10"]
+        extif["mgmt0.10 · tagged VLAN 10<br/>호스트 IP와 기본 경로 없음"]
+        brex["Open vSwitch br-ex<br/>physnet1의 외부 bridge"]
+        localnet["OVN provider localnet<br/>flat / physnet1"]
+        lrouter["OVN logical router<br/>외부 port 198.51.100.2<br/>FIP DNAT · SNAT"]
+        lswitch["OVN tenant logical switch<br/>203.0.113.0/24<br/>gateway 203.0.113.1"]
+        brint["OVS br-int · tap/vNIC"]
+        vm["Tenant VM / Kubernetes node<br/>fixed IP 203.0.113.x<br/>FIP 198.51.100.50-99"]
+        tunnel["tunnel_interface = mgmt0<br/>단일 노드라 cross-host Geneve 없음"]
     end
 
-    ceph["3노드 이상에서 Ceph<br/>MON · OSD"]
-
-    admin -->|"관리망 192.0.2.0/24"| router
-    router -->|"native/untagged"| switch
-    switch --> mgmt
+    admin -->|"관리 접속"| router
+    internet <-->|"WAN"| router
+    router <-->|"native 관리망"| switch
+    switch <-->|"untagged"| mgmt
     mgmt --> api
-    mgmt <-->|"현재 tunnel underlay"| tunnel
 
-    internet <--> router
-    router <-->|"VLAN 10 · 198.51.100.0/24"| switch
-    switch <-->|"tagged VLAN 10"| provider
-    provider <-->|"Floating IP / north-south"| ovn
+    router <-->|"Provider VLAN 10"| switch
+    switch <-->|"tagged VLAN 10"| extif
+    extif <-->|"untagged frame"| brex
+    brex <-->|"north-south"| localnet
+    localnet <-->|"198.51.100.0/24"| lrouter
+    lrouter <-->|"routing · FIP translation"| lswitch
+    lswitch <-->|"logical port"| brint
+    brint <-->|"virtio vNIC"| vm
 
-    switch -.->|"향후 tagged VLAN 20"| tunnel
-    tunnel <-->|"Geneve UDP 6081"| ovn
-    ovn <--> vm1
-    ovn <--> vm2
-    vm1 <-->|"east-west 논리 통신"| vm2
-
-    switch -.->|"VLAN 30 · 별도 경로 권장"| storage
-    storage -.->|"block · image · VM disk"| ceph
+    mgmt -.->|"현재 공유 underlay"| tunnel
+    tunnel -.->|"OVN encapsulation endpoint"| brint
 ```
 
-실선은 현재 한 노드에서도 쓰는 경로다. 점선은 3노드 전환 때 검토하는 전용 tunnel VLAN과
-Ceph 저장 경로다.
-외부에서 VM으로 들어오는 패킷은 `VLAN 10 → mgmt0.10 → br-ex → OVN router → tenant VM`
-순서로 흐른다. 반대로 VM의 외부 통신과 Floating IP 응답도 같은 경로를 역방향으로 지난다.
-Tenant VM끼리의 논리 통신은 OVN이 처리하며, 서로 다른 물리 호스트에 있으면 tunnel
-interface의 Geneve 패킷으로 캡슐화된다.
+외부에서 Floating IP로 들어오는 패킷은
+`Provider gateway → VLAN 10 → mgmt0.10 → br-ex → OVN provider localnet → logical router의
+DNAT → tenant logical switch → br-int → VM` 순서로 흐른다. VM이 외부로 나갈 때는 OVN router가
+SNAT 또는 Floating IP 변환을 수행하고 같은 경로를 역방향으로 지난다. `mgmt0.10`에는 IP를
+설정하지 않으며, `flat/physnet1`을 사용해 Linux VLAN subinterface에서 이미 제거된 VLAN 10
+태그를 Neutron이 다시 붙이지 않게 한다.
 
 한 노드에서는 Ceph가 꺼져 있으므로 별도 저장망이 필요 없다. 이 구성은 VLAN 10을 처리할
 관리형 스위치와 `198.51.100.1` 게이트웨이·라우팅을 제공할 라우터 또는 방화벽이 있어야
@@ -92,7 +96,7 @@ Terraform은 외부 Neutron 네트워크를 `flat/physnet1`로 만든다. Linux�
 VLAN 10 태그를 제거한 프레임을 Kolla의 `br-ex`에 전달하기 때문이다. 이 구조에서 Neutron
 네트워크를 다시 `vlan`, segmentation ID 10으로 만들면 이중 태깅이 될 수 있다.
 
-## 세 노드 목표 구성
+## 3노드 이상 목표 구성
 
 두 번째 NIC를 추가할 수 있다면 다음 구성을 기본 목표로 한다.
 
@@ -104,6 +108,153 @@ VLAN 10 태그를 제거한 프레임을 Kolla의 `br-ex`에 전달하기 때문
 | Ceph public/client | VLAN 30, `192.168.30.0/24` | `.2`, `.4`, `.5` | 없음 | NIC 2 또는 storage bond |
 | Ceph cluster | VLAN 31, `192.168.31.0/24` | `.2`, `.4`, `.5` | 없음 | 별도 고속 경로가 있을 때만 |
 | Tenant overlay | `203.0.113.0/24` | VM 주소 | Neutron router | 물리 VLAN 없음 |
+
+다음은 3노드 HA를 만든 뒤 5·7노드로 늘려도 그대로 반복되는 underlay 배치다. `cloud01~03`은
+control·network 역할을 유지하고, `cloud04+`는 보통 compute와 선택적 Ceph OSD 역할만 맡는다.
+현재 `enable_neutron_provider_networks=yes`이므로 network와 compute 역할 노드 모두 Provider
+VLAN과 `br-ex`/`physnet1` mapping을 준비한다. Tunnel망도 VM이 있는 모든 compute와 gateway
+chassis 사이를 연결한다.
+
+```mermaid
+flowchart LR
+    admin["관리자 · VPN · bastion"]
+    internet["외부망 / 인터넷"]
+    router["OpenWrt / 방화벽<br/>관리 GW · Provider GW"]
+
+    subgraph fabric["관리형 스위치의 분리된 L2 영역"]
+        direction TB
+        n0["native/untagged 관리·API<br/>192.0.2.0/24<br/>기본 경로 · OpenStack VIP .10"]
+        n10["tagged VLAN 10 · Provider<br/>198.51.100.0/24<br/>FIP · north-south"]
+        n20["tagged VLAN 20 · OVN tunnel<br/>192.168.20.0/24<br/>Gateway 없음 · Geneve UDP 6081"]
+        n30["tagged VLAN 30 · Ceph public/client<br/>192.168.30.0/24<br/>MON · client↔OSD"]
+        n31["optional tagged VLAN 31 · Ceph cluster<br/>192.168.31.0/24<br/>OSD 복제·복구 전용"]
+    end
+
+    subgraph controllers["cloud01~03 · control + network + compute"]
+        direction TB
+        cmgmt["mgmt0<br/>host IP · API · SSH"]
+        cext["mgmt0.10 → br-ex<br/>호스트 IP 없음"]
+        ctun["mgmt0.20 또는 tunnel NIC<br/>OVN Geneve endpoint"]
+        cpub["storage0.30 또는 bond.30<br/>Ceph client<br/>MON/OSD는 topology로 선택"]
+        ccluster["storage0.31 또는 별도 bond<br/>OSD를 배치한 host만 사용"]
+    end
+
+    subgraph workers["cloud04+ · 보통 compute, OSD는 선택"]
+        direction TB
+        wmgmt["mgmt0<br/>host IP · SSH · Kolla 공통 통신"]
+        wext["mgmt0.10 → br-ex<br/>provider network용 · 호스트 IP 없음"]
+        wtun["mgmt0.20 또는 tunnel NIC<br/>VM overlay endpoint"]
+        wpub["storage0.30 또는 bond.30<br/>Nova RBD client<br/>MON/OSD 선택 가능"]
+        wcluster["storage0.31 또는 별도 bond<br/>OSD를 배치한 host만 사용"]
+    end
+
+    admin --> router
+    internet <--> router
+    router <-->|"관리 routing"| n0
+    router <-->|"Provider routing"| n10
+
+    n0 <--> cmgmt
+    n0 <--> wmgmt
+    n10 <--> cext
+    n10 <--> wext
+    n20 <--> ctun
+    n20 <--> wtun
+    n30 <--> cpub
+    n30 <--> wpub
+    n31 <-.->|"별도 고속 경로가 있을 때"| ccluster
+    n31 <-.->|"OSD host만"| wcluster
+```
+
+VM과 스토리지 패킷은 서로 다른 L2 영역을 지난다. Tenant CIDR은 계속 OVN의
+논리망이며 VLAN 20 자체에 VM 주소를 할당하지 않는다. VLAN 20에는 Geneve로 캡슐화된
+호스트 간 패킷만 흐른다.
+
+### 서로 다른 compute 사이의 east-west 경로
+
+```mermaid
+flowchart LR
+    subgraph source["compute A"]
+        vma["VM A<br/>203.0.113.11"]
+        inta["br-int · OVN logical port"]
+        tuna["tunnel endpoint<br/>192.168.20.2"]
+    end
+
+    tnet["VLAN 20 tunnel underlay<br/>Geneve UDP 6081"]
+
+    subgraph destination["compute B"]
+        tunb["tunnel endpoint<br/>192.168.20.4"]
+        intb["br-int · OVN logical port"]
+        vmb["VM B<br/>203.0.113.12"]
+    end
+
+    vma <--> inta
+    inta <-->|"east-west encapsulation"| tuna
+    tuna <-->|"Geneve"| tnet
+    tnet <-->|"Geneve"| tunb
+    tunb <--> intb
+    intb <--> vmb
+```
+
+### Floating IP의 north-south 경로
+
+아래 경로는 현재 설정처럼 별도의 distributed FIP를 켜지 않고 `cloud01`∼`cloud03`의
+gateway chassis를 통과하는 경우다. 분산 FIP를 별도로 활성화하면 compute 노드의
+`br-ex`에서 Provider VLAN으로 직접 나가는 경로도 함께 검토해야 한다.
+
+```mermaid
+flowchart LR
+    vm["Tenant VM<br/>fixed IP 203.0.113.x"]
+    vmint["compute br-int<br/>OVN logical port"]
+    computetun["compute tunnel endpoint"]
+    tnet["VLAN 20 tunnel underlay<br/>Geneve UDP 6081"]
+
+    subgraph gateway["network 역할 노드 · 기본 OVN gateway chassis"]
+        tungw["VLAN 20 tunnel endpoint"]
+        intgw["br-int · OVN router pipeline<br/>FIP DNAT/SNAT"]
+        localnetgw["provider localnet<br/>flat · physnet1"]
+        brexgw["br-ex → mgmt0.10"]
+    end
+
+    pnet["VLAN 10 Provider<br/>198.51.100.0/24"]
+    edgegw["Provider gateway<br/>198.51.100.1"]
+    outside["외부망 / 인터넷"]
+
+    vm <--> vmint
+    vmint <--> computetun
+    computetun <-->|"Geneve"| tnet
+    tnet <-->|"north-south Geneve"| tungw
+    tungw <--> intgw
+    intgw <-->|"logical routing · FIP"| localnetgw
+    localnetgw <--> brexgw
+    brexgw <-->|"mgmt0.10에서 VLAN 10 tag/untag"| pnet
+    pnet <--> edgegw
+    edgegw <--> outside
+
+```
+
+### Ceph client I/O와 OSD 복제 경로
+
+RBD client는 MON에서 cluster map과 인증 정보를 얻은 뒤 OSD와 직접 데이터를 주고받는다.
+`cluster_network`가 비어 있으면 OSD 복제·복구도 VLAN 30 public망을 사용한다. VLAN 31을
+설정하면 OSD 사이의 replication·recovery·backfill만 별도 cluster망으로 이동한다.
+
+```mermaid
+flowchart TB
+    client["Nova · Cinder · Glance<br/>RBD client"]
+    publicnet["VLAN 30 Ceph public/client<br/>192.168.30.0/24"]
+    mon["MON quorum<br/>map · auth · membership"]
+    osda["OSD host A<br/>client I/O"]
+    osdb["OSD host B<br/>replica · recovery"]
+    clusternet["선택 VLAN 31 Ceph cluster<br/>192.168.31.0/24"]
+
+    client <-->|"RADOS/RBD"| publicnet
+    publicnet <--> mon
+    publicnet <--> osda
+    publicnet <--> osdb
+    osda <-->|"cluster_network가 비어 있을 때<br/>replication · recovery · backfill"| osdb
+    osda <-.->|"cluster_network를 켠 경우"| clusternet
+    clusternet <-.-> osdb
+```
 
 NIC가 한 개뿐이면 VLAN 10·20·30을 같은 trunk에 실을 수 있다. L2와 접근 정책은 분리되지만
 대역폭, NIC 장애와 스위치 포트 장애는 공유한다. NVMe Ceph 복구 트래픽과 VM 트래픽이 같은

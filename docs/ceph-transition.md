@@ -10,29 +10,110 @@ Ceph OSD를 적용하면 선택한 빈 디스크가 BlueStore 장치로 사용�
 Ceph 전용 로컬 topology, keyring과 클러스터 복구 상태의 보관 기준은
 [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를 따른다.
 
-기존 LVM 클라우드를 전환하는 전체 흐름은 다음과 같다. `ceph-cluster.sh`의 자동화
-범위는 Kolla client 설정을 내보내는 단계까지다. hybrid Kolla 설정, 기존 데이터
-이전과 최종 LVM 비활성화는 각각 검토한 유지보수 작업으로 수행한다.
+완료된 Ceph의 제어부, OSD와 OpenStack client 관계는 다음과 같다. MON 정족수와
+MGR은 클러스터 상태를 관리하고, 실제 RBD 데이터는 같은 device class를 가진 3대
+이상의 OSD 호스트에 host failure domain으로 배치된다. 각 RBD object의 복제본
+3개는 서로 다른 OSD 호스트를 사용한다. MON은 고정 이름이 아니라
+`bootstrap_host`와 정렬된 OSD 호스트 중 앞선 호스트에 배치된다. 기본 3노드
+topology에서는 그 결과가 `cloud01`∼`cloud03`이다.
 
 ```mermaid
 flowchart TB
-    LVM["운영 중인 LVM OpenStack<br/>기존 backend 유지"]
-    PLAN["별도 Ceph topology<br/>validate + preflight"]
-    BOOT["cephadm bootstrap + host 등록<br/>각 단계 확인 문자열 필요"]
-    OSD["OSD dry-run + 최초 적용<br/>manifest SHA-256 확인"]
-    EXPORT["RBD pool 구성<br/>Kolla client 설정 export"]
-    HYBRID["hybrid Kolla 설정<br/>LVM 유지 + Ceph 추가<br/>별도 검토 작업"]
-    TEST["새 Ceph 볼륨과 이미지<br/>생성 + 연결 + 복원 시험"]
-    MOVE["기존 Cinder와 Glance 데이터<br/>백업하며 수동 이전"]
-    GATE{"로컬 볼륨과 snapshot 0개<br/>복원과 노드 장애 시험 성공?"}
-    KEEP["LVM backend 유지<br/>문제 해결 후 다시 검증"]
-    OFF["LVM과 iSCSI 비활성화<br/>별도 유지보수 작업"]
+    subgraph CONTROL["Ceph control plane"]
+        direction LR
+        MON1["MON 1<br/>bootstrap_host"] <--> MON2["MON 2<br/>선택된 OSD host"]
+        MON2 <--> MON3["MON 3<br/>선택된 OSD host"]
+        MON3 <--> MON1
+        MGR1["active MGR<br/>MON placement host"] <--> MGR2["standby MGR<br/>MON placement host"]
+    end
 
-    LVM --> PLAN --> BOOT --> OSD --> EXPORT
-    EXPORT --> HYBRID --> TEST --> MOVE --> GATE
-    GATE -->|아니요| KEEP
+    subgraph STORAGE["BlueStore data plane · 선택한 동일 device class"]
+        direction LR
+        OSD1[("OSD host A<br/>OSD 1..n")]
+        OSD2[("OSD host B<br/>OSD 1..n")]
+        OSD3[("OSD host C<br/>OSD 1..n")]
+        OSDN[("선택적 host D..N<br/>추가 OSD")]
+    end
+
+    subgraph POOLS["OpenStack RBD pools"]
+        direction LR
+        IMAGES[("images<br/>Glance image")]
+        VOLUMES[("volumes<br/>Cinder volume")]
+        VMS[("vms<br/>Nova ephemeral")]
+    end
+
+    CRUSH["CRUSH placement<br/>failure domain = host<br/>pool size=3 · min_size=2"]
+    MON1 -.->|"cluster map"| CRUSH
+    MGR1 -.->|"health · orchestration"| CRUSH
+    IMAGES --> CRUSH
+    VOLUMES --> CRUSH
+    VMS --> CRUSH
+    CRUSH --> OSD1
+    CRUSH --> OSD2
+    CRUSH --> OSD3
+    CRUSH -.->|"용량 확장"| OSDN
+
+    subgraph CLIENTS["Kolla가 배포하는 RBD clients"]
+        direction LR
+        GLANCE["Glance<br/>client.glance"]
+        CINDER["Cinder volume<br/>client.cinder"]
+        NOVA["Nova/libvirt<br/>client.cinder keyring"]
+    end
+
+    GLANCE -->|"read/write"| IMAGES
+    CINDER -->|"read/write"| VOLUMES
+    CINDER -->|"read"| IMAGES
+    CINDER -->|"pool 접근 권한"| VMS
+    NOVA -->|"attach volume"| VOLUMES
+    NOVA -->|"ephemeral RBD"| VMS
+
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#172554;
+    classDef osd fill:#f3e8ff,stroke:#9333ea,color:#581c87;
+    classDef pool fill:#ecfeff,stroke:#0891b2,color:#164e63;
+    class MON1,MON2,MON3,MGR1,MGR2 control;
+    class OSD1,OSD2,OSD3,OSDN osd;
+    class IMAGES,VOLUMES,VMS pool;
+```
+
+기존 LVM 클라우드를 전환하는 전체 흐름은 다음과 같다. `ceph-cluster.sh`의 자동화
+범위는 Kolla client 설정을 내보내는 단계까지다. hybrid Kolla 설정, 기존 데이터
+이전과 최종 LVM 비활성화는 각각 검토한 유지보수 작업으로 수행한다. 그림에서
+보라색 구간은 저장소 자동화가 제공하는 단계이고, 회색 구간은 별도로 검토해야 하는
+운영 변경이다. 노란색은 반드시 통과해야 하는 확인·검증 gate이고, 빨간색에서는
+다음 단계로 진행하지 않는다.
+
+```mermaid
+flowchart TB
+    LVM["운영 중인 LVM OpenStack<br/>cloud01 backend 계속 사용"] --> TOPO["별도 ceph.local topology<br/>validate + device/network preflight"]
+    TOPO --> BOOT{"BOOTSTRAP-CEPH 확인<br/>첫 MON/MGR 생성"}
+    BOOT --> HOSTS{"ADD-CEPH-HOSTS 확인<br/>MON 3개 · MGR 2개 배치"}
+    HOSTS --> ZERO{"initial-only guard<br/>기존 OSD 수 = 0?"}
+    ZERO -->|"아니요"| BLOCK["자동 중단<br/>증설은 별도 cephadm 계획"]
+    ZERO -->|"예"| PLAN["osd-plan<br/>device preflight + cephadm dry-run<br/>manifest SHA-256 생성"]
+    PLAN --> APPLY{"WIPE-CEPH-OSDS:{SHA-256}<br/>일치할 때만 최초 OSD 적용"}
+    APPLY --> HEALTH{"모든 대상 OSD up/in<br/>복구 완료 + HEALTH_OK?"}
+    HEALTH -->|"아니요"| REPAIR["pool 생성 중단<br/>원인 복구 후 status 재검증"]
+    REPAIR --> HEALTH
+    HEALTH -->|"예"| POOL{"CONFIGURE-CEPH-POOLS 확인<br/>images · volumes · vms<br/>size 3 · min_size 2"}
+    POOL --> EXPORT{"EXPORT-KOLLA-CEPH-CLIENTS 확인<br/>ceph.conf + 최소권한 keyring"}
+
+    EXPORT --> HYBRID["검토한 hybrid Kolla 설정<br/>LVM/iSCSI 유지 + Ceph 추가"]
+    HYBRID --> TEST{"Ceph 경로 검증<br/>image upload/boot<br/>volume create/attach/snapshot<br/>다른 compute에서 복구"}
+    TEST -->|"실패"| KEEP["LVM backend 유지<br/>Ceph 경로 수정 후 재시험"]
     KEEP --> TEST
-    GATE -->|예| OFF
+    TEST -->|"성공"| MOVE["외부 백업을 유지하며<br/>Cinder/Glance 데이터 수동 이전"]
+    MOVE --> FINAL{"최종 비활성화 gate<br/>LVM volume/snapshot 0개?<br/>백업 복원 성공?<br/>노드 장애 중 quorum·RBD I/O 유지?"}
+    FINAL -->|"아니요"| KEEP
+    FINAL -->|"예"| OFF["별도 유지보수 작업<br/>LVM · iSCSI backend 비활성화"]
+
+    classDef auto fill:#f3e8ff,stroke:#9333ea,color:#581c87;
+    classDef manual fill:#f3f4f6,stroke:#4b5563,color:#111827;
+    classDef gate fill:#fef3c7,stroke:#d97706,color:#78350f;
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    class TOPO,PLAN auto;
+    class HYBRID,MOVE,OFF manual;
+    class BOOT,HOSTS,ZERO,APPLY,HEALTH,POOL,EXPORT,TEST,FINAL gate;
+    class BLOCK,REPAIR,KEEP stop;
 ```
 
 ## 기존 LVM 클라우드와 topology 분리
@@ -158,15 +239,28 @@ preflight 전에 중단한다. 운영 중인 Ceph에 새 호스트나 OSD만 추
 별도로 검토한 cephadm 증설 절차를 사용해야 한다.
 
 ```mermaid
-flowchart LR
-    EMPTY{"기존 OSD 수"}
-    FIRST["0개<br/>osd-plan 후 osd-apply 가능"]
-    BLOCK["1개 이상<br/>자동화가 적용 전에 중단"]
-    REVIEW["호스트 또는 OSD 증설<br/>별도로 검토한 cephadm 절차"]
+flowchart TB
+    CMD["osd-plan 또는 osd-apply"] --> CLUSTER["require_cluster<br/>cephadm cluster 존재 확인"]
+    CLUSTER --> QUERY["ceph osd ls --format json"]
+    QUERY --> EMPTY{"OSD 수"}
+    EMPTY -->|"0"| RENDER["topology validate + render_plan<br/>OSD spec · manifest · SHA-256 생성"]
+    RENDER --> PREFLIGHT["topology에 선언된 by-id만 검사<br/>serial · size · class · signature · mount · holder"]
+    PREFLIGHT --> REFRESH["ceph orch device ls<br/>--wide --refresh"]
+    REFRESH --> DRY["ceph orch apply -i OSD-spec.yml<br/>--dry-run"]
+    DRY --> MODE{"호출 명령"}
+    MODE -->|"osd-plan"| REVIEW["manifest를 사람이 검토<br/>실제 적용 없음"]
+    MODE -->|"osd-apply"| SHA{"CEPH_OSD_CONFIRM의 SHA가<br/>방금 만든 manifest와 일치?"}
+    SHA -->|"아니요"| STOP["자동 중단<br/>OSD 생성 없음"]
+    SHA -->|"예"| CREATE["선언된 장치에만<br/>최초 BlueStore OSD 생성"]
+    EMPTY -->|"1개 이상"| BLOCK["장치 preflight 전에 자동 중단<br/>기존 OSD를 건드리지 않음"]
+    BLOCK --> SCALE["신규 host/OSD 증설은<br/>별도로 검토한 cephadm add-only 절차"]
 
-    EMPTY -->|0| FIRST
-    EMPTY -->|1 이상| BLOCK
-    BLOCK --> REVIEW
+    classDef gate fill:#fef3c7,stroke:#d97706,color:#78350f;
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    class EMPTY,MODE,SHA gate;
+    class STOP,BLOCK stop;
+    class REVIEW,CREATE done;
 ```
 
 `osd-plan`은 장치 preflight를 다시 수행한 직후 cephadm dry-run을 실행한다. 출력의 호스트와

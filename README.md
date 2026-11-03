@@ -8,17 +8,61 @@ Ceph OSD 용도로 추가하는 배치를 권장한다. OpenStack 위의 Kuberne
 Terraform으로 만들고 Kubespray로 설치한다.
 
 ```mermaid
-flowchart TD
-  A["장비 확인과 로컬 설정 작성"] --> B["Ubuntu Autoinstall seed 생성"]
-  B --> C["cloud01에 Ubuntu Server 24.04 설치"]
-  C --> D["저장소 clone과 로컬 설정 복원"]
-  D --> E["Ansible로 Ubuntu 호스트 준비"]
-  E --> F["Ansible로 OpenWrt Provider VLAN 준비"]
-  F --> S["스토리지 dry-run과 확인값으로<br/>데이터 SSD · NVMe 준비"]
-  S --> G["Kolla-Ansible로 OpenStack과 Skyline 배포"]
-  G --> H["Terraform으로 OpenStack 자원과 Kubernetes VM 생성"]
-  H --> I["Kubespray로 management/hosting Kubernetes 설치"]
-  I -.->|"3노드·Ceph·복구 검증 후"| J["Magnum과 CAPI/CAPO 플랫폼 활성화"]
+flowchart TB
+  subgraph PREINSTALL["설치 전 Ubuntu 작업 PC · operator"]
+    HW["장비 라벨·MAC·디스크 시리얼 조사"]
+    LOCAL["로컬 입력<br/>openstack-cluster.local.yml<br/>openstack-plan.local.yml"]
+    SEED["Autoinstall 렌더링·seed 생성"]
+    SEEDOUT["산출물<br/>cloud01-autoinstall-seed.iso<br/>SHA-256"]
+    BACKUP["외부 암호화 백업<br/>로컬 입력 · seed · SSH 개인키"]
+
+    HW --> LOCAL --> SEED --> SEEDOUT
+    LOCAL --> BACKUP
+    SEEDOUT --> BACKUP
+  end
+
+  RESTORE{"승인 게이트 1<br/>외부 백업의 실제 복원 확인"}
+  OSDISK{"승인 게이트 2 · 초기화<br/>설치 화면의 OS SSD 시리얼 확인"}
+  INSTALL["Ubuntu Server 24.04 Autoinstall"]
+  REBOOT0["재부팅 A<br/>설치 매체 제거 후 새 OS 부팅"]
+
+  BACKUP --> RESTORE --> OSDISK --> INSTALL --> REBOOT0
+
+  subgraph OPERATOR["설치된 cloud01 · operator"]
+    CLONE["저장소 clone<br/>로컬 입력·SSH 키 복원"]
+    RENDER["validate → setup → render"]
+    GEN["주요 산출물<br/>cluster-plan.json · Ansible/Kolla inventory<br/>globals.yml · passwords.yml"]
+    HOSTS["prepare-hosts<br/>playbook이 become으로 호스트 구성"]
+    REBOOT1["재부팅 B<br/>Netplan·IOMMU·호스트 설정 활성화"]
+    ROUTERPLAN["OpenWrt discover → plan"]
+    ROUTERGATE{"승인 게이트 3<br/>APPLY-OPENWRT + CONFIRM-OPENWRT"}
+    ROUTERAPPLY["OpenWrt apply<br/>rollback guard → router/host probe → confirm"]
+    VERIFY["verify-hosts<br/>호스트명·NIC·시간·mount·VG 검사"]
+    TFPLAN["Terraform plan<br/>저장된 kubernetes.tfplan 검토"]
+    TFGATE{"승인 게이트 5<br/>APPLY-KUBERNETES-INFRA"}
+    TFAPPLY["Terraform apply<br/>네트워크·볼륨·k8s VM 생성"]
+    TFOUT["주요 산출물<br/>terraform.tfstate · OpenStack 자원"]
+    K8S["Kubespray deploy-kubernetes<br/>management/hosting Kubernetes"]
+    K8SOUT["주요 산출물<br/>kubeconfig · Kubespray 적용 상태"]
+  end
+
+  subgraph ROOT["설치된 cloud01 · root 명령"]
+    STORPLAN["스토리지 dry-run<br/>실제 SSD·NVMe 경로와 시리얼 대조"]
+    STORGATE{"승인 게이트 4 · 초기화<br/>WIPE-OPENSTACK-STORAGE:<br/>data-serial:fast-serial"}
+    STORAPPLY["스토리지 apply<br/>Docker ext4 + Cinder LVM VG 생성"]
+    REBOOT2["재부팅 C<br/>Docker mount와 두 VG 확정"]
+    KOLLA["Kolla bootstrap → prechecks/pull → deploy<br/>Skyline·핵심 OpenStack 배포"]
+    CLOUDINIT["cloud-init<br/>Ubuntu 24.04 Glance image 등록"]
+    CLOUDVERIFY["verify-openstack<br/>API·compute·network·Cinder·Skyline 검사"]
+    CLOUDOUT["주요 산출물<br/>/etc/kolla/clouds.yaml · 서비스 설정"]
+  end
+
+  REBOOT0 --> CLONE --> RENDER --> GEN --> HOSTS --> REBOOT1
+  REBOOT1 --> ROUTERPLAN --> ROUTERGATE --> ROUTERAPPLY
+  ROUTERAPPLY --> STORPLAN --> STORGATE --> STORAPPLY --> REBOOT2 --> VERIFY
+  VERIFY --> KOLLA --> CLOUDINIT --> CLOUDVERIFY --> CLOUDOUT --> TFPLAN --> TFGATE --> TFAPPLY
+  TFAPPLY --> TFOUT --> K8S --> K8SOUT
+  K8SOUT -.->|"3노드·Ceph·복구 검증 후"| PLATFORM["Magnum + CAPI/CAPO 플랫폼"]
 ```
 
 현재 저장소의 기본 토폴로지는 `cloud01`만 활성화되어 있다. 실제 장비에는 적용하지 않았으며,
@@ -88,20 +132,78 @@ Ubuntu 자동 설치는 공개키 전용 SSH와 함께 이 작업에 필요한
 
 ```mermaid
 flowchart TB
-  ADMIN["관리자 PC"] --> VIP["OpenStack API VIP 192.0.2.10<br/>Skyline :9999"]
+  ADMIN["관리자 PC"]
+  CLIENT["외부 클라이언트"]
+  OPENWRT["OpenWrt<br/>관리 192.0.2.1<br/>Provider gateway 198.51.100.1"]
+  SWITCH["스위치 trunk<br/>관리망 untagged<br/>VLAN 10 tagged"]
 
-  subgraph CLOUD01["물리 서버 cloud01"]
-    KOLLA["Kolla OpenStack<br/>control · network · compute · monitoring"]
-    LVM["Cinder LVM<br/>fast · standard"]
-    VM["OpenStack VM k8s-01"]
-    K8S["단일 노드 management/hosting Kubernetes"]
+  subgraph CLOUD01["cloud01 · Ubuntu Server 24.04 · 한 장애 도메인"]
+    subgraph HOSTNET["호스트 NIC와 OVN 데이터 경로"]
+      MGMT["mgmt0 · 192.0.2.2<br/>관리/API + OVN tunnel 공유"]
+      EXT["mgmt0.10<br/>호스트 IP 없음"]
+      BREX["br-ex · physnet1<br/>Neutron flat provider 연결"]
+      BRINT["OVN integration bridge<br/>논리 스위칭·라우팅·NAT"]
+    end
 
-    KOLLA --> VM
-    LVM --> VM
-    VM --> K8S
+    subgraph KOLLA["Kolla 컨테이너"]
+      EDGE["Keepalived + HAProxy<br/>API VIP 192.0.2.10"]
+      UI["Skyline :9999"]
+      APIS["Keystone · Nova API · Neutron<br/>Glance · Cinder API"]
+      CONTROL["MariaDB · RabbitMQ · Memcached"]
+      OVN["OVN central + ovn-controller"]
+      COMPUTE["Nova compute + libvirt/KVM"]
+      VOLUME["Cinder volume + iSCSI<br/>standard · fast"]
+      LOGS["Fluentd 로그 수집"]
+    end
+
+    subgraph NEUTRON["Terraform이 만드는 OpenStack 네트워크"]
+      PUBLIC["public flat network<br/>198.51.100.0/24"]
+      FIP["Floating IP mapping<br/>198.51.100.50 ↔ 203.0.113.11"]
+      LROUTER["OVN 논리 router<br/>외부 고정 IP 198.51.100.2<br/>DNAT/SNAT"]
+      TENANT["kubernetes tenant network<br/>203.0.113.0/24"]
+    end
+
+    subgraph GUEST["OpenStack 게스트"]
+      VM["k8s-01<br/>203.0.113.11 · 4 vCPU · 8GiB"]
+      K8S["management/hosting Kubernetes<br/>kube-vip 203.0.113.10:6443"]
+      VM --> K8S
+    end
+
+    subgraph STORAGE["물리 디스크 → 호스트 저장소 → OpenStack 자원"]
+      DATA["1TB 데이터 SSD"]
+      DOCKER["256GiB ext4 /var/lib/docker<br/>Kolla 영속 데이터 + Glance file store"]
+      STANDARD["cinder-ssd VG<br/>standard volume type"]
+      NVME["2TB NVMe"]
+      FAST["cinder-nvme VG<br/>fast volume type"]
+      ROOTVOL["k8s-01 120GiB boot volume"]
+
+      DATA --> DOCKER
+      DATA --> STANDARD --> VOLUME
+      NVME --> FAST --> VOLUME --> ROOTVOL --> VM
+    end
+
+    MGMT --> EDGE
+    EDGE --> UI
+    EDGE --> APIS
+    APIS <--> CONTROL
+    APIS --> OVN
+    APIS --> COMPUTE
+    APIS --> VOLUME
+    COMPUTE --> VM
+    DOCKER --> CONTROL
+    DOCKER --> APIS
+    APIS -.->|"container logs"| LOGS
+
+    EXT --> BREX --> PUBLIC --> LROUTER --> TENANT --> BRINT --> VM
+    FIP -.->|"router의 주소 변환 규칙"| LROUTER
+    OVN --> BRINT
+    MGMT -.->|"단일 노드에서는 로컬,<br/>확장 시 Geneve tunnel"| OVN
   end
 
-  VIP --> KOLLA
+  ADMIN -- "SSH 192.0.2.2" --> MGMT
+  ADMIN -- "Skyline/API 192.0.2.10" --> EDGE
+  CLIENT --> OPENWRT --> SWITCH
+  SWITCH -- "VLAN 10 tagged" --> EXT
 ```
 
 한 물리 서버에서 모든 서비스가 실행되므로 호스트 장애를 견디지 못한다. OpenStack API VIP와

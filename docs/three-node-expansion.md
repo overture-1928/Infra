@@ -28,21 +28,53 @@ controller 3대를 유지한 4·6·8노드 구성도 같은 방식으로 렌더�
 | 7노드 | `cloud01`∼`cloud03` | 기존 역할은 유지하고 `cloud04`∼`cloud07` 추가 | 선택한 3개 이상 호스트에 Ceph OSD |
 
 권장 역할 배치는 다음 그림처럼 확장된다. `cloud04` 이후를 추가해도 기존 세
-controller의 정족수와 network 역할은 그대로 유지한다.
+controller의 정족수와 network 역할은 그대로 유지한다. 실선은 각 규모에서 활성화된
+호스트에 배치하는 Kolla 역할이고, 점선은 Ceph를 도입할 때 선택하는 OSD 후보 관계다.
 
 ```mermaid
-flowchart LR
-    N3["3노드<br/>cloud01-03: control + network + compute<br/>LVM storage: cloud01만"]
-    N5["5노드<br/>cloud01-03: 기존 역할 유지<br/>cloud04-05: compute"]
-    N7["7노드<br/>cloud01-03: 기존 역할 유지<br/>cloud04-07: compute"]
-    CEPH["Ceph를 사용할 때<br/>선택한 3개 이상 호스트에 OSD<br/>LVM storage 역할은 추가하지 않음"]
+flowchart TB
+    CLIENT["사용자 · Skyline · API client"] --> VIP["OpenStack API VIP<br/>HAProxy/Keepalived"]
 
-    N3 -->|cloud04-05 편입| N5
-    N5 -->|cloud06-07 편입| N7
-    CEPH -.-> N3
-    CEPH -.-> N5
-    CEPH -.-> N7
+    subgraph ROLES["Kolla 역할과 서비스 집합"]
+        direction LR
+        CONTROL["control · cloud01-03<br/>stateless API replica<br/>Galera · RabbitMQ 정족수"]
+        NET["network · cloud01-03<br/>OVN central · gateway chassis"]
+        NOVA["Nova compute pool<br/>Scheduler가 활성 compute에 VM 배치"]
+    end
+
+    subgraph PHYSICAL["물리 호스트 묶음"]
+        direction LR
+        CORE["cloud01 · cloud02 · cloud03<br/>각각 control + network + compute<br/>3개 물리 장애 도메인"]
+        EXTRA["compute-only 확장<br/>5노드: cloud04-05 추가<br/>7노드: cloud06-07까지 추가"]
+        C1LOCAL["cloud01에만 유지<br/>monitoring inventory 역할(서비스 비활성)<br/>LVM storage"]
+    end
+
+    VIP --> CONTROL
+    CONTROL --> CORE
+    NET --> CORE
+    NOVA --> CORE
+    NOVA --> EXTRA
+    CORE --> C1LOCAL
+
+    LVM[("LVM 단계<br/>Cinder VG + Glance file data<br/>cloud01 단일 장애점")] --> C1LOCAL
+
+    CEPH["선택적 Ceph 단계<br/>같은 device class의 OSD 호스트 3대 이상<br/>LVM storage 역할을 다른 노드에 복제하지 않음"]
+    CORE -.->|"선택한 호스트"| CEPH
+    EXTRA -.->|"선택한 호스트"| CEPH
+
+    classDef control fill:#dbeafe,stroke:#2563eb,color:#172554;
+    classDef compute fill:#ecfeff,stroke:#0891b2,color:#164e63;
+    classDef danger fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    classDef ceph fill:#f3e8ff,stroke:#9333ea,color:#581c87;
+    class CONTROL,NET,CORE control;
+    class NOVA,EXTRA compute;
+    class LVM danger;
+    class CEPH ceph;
 ```
+
+5노드에서는 `cloud06`과 `cloud07`을 비활성 상태로 두고, 7노드에서 두 노드를
+compute pool에 추가한다. Ceph를 쓰지 않는 동안 점선 OSD 후보는 실제 storage
+역할이 아니며, Nova compute 노드만 늘려서는 Cinder·Glance 데이터가 복제되지 않는다.
 
 controller를 5대나 7대로 늘리는 구성도 검증은 통과하지만, 제어부의 DB·메시지
 큐·API 배치가 함께 커진다. 해당 장애 도메인과 용량이 필요하다는 근거가 있을 때
@@ -313,6 +345,50 @@ sudo --preserve-env=OPENSTACK_EXPAND_CONFIRM ./scripts/cluster.sh expand-opensta
 6. post-deploy와 서비스 설정 검증
 7. 컨테이너 상태 검사
 8. OpenStack API와 등록된 컴퓨트 서비스 검사
+
+실제 실행 경로와 중단 지점은 다음과 같다. 확인 gate의 호스트 목록은 control 그룹이
+아니라 렌더된 전체 활성 호스트 목록이다. 따라서 새 compute-only 노드도 확인 문자열에
+반드시 포함된다.
+
+```mermaid
+flowchart TB
+    START["권장 확장 단위<br/>1 → 3 먼저 검증<br/>그다음 3 → 5 → 7"] --> LOCAL["ignored local topology 수정<br/>새 IP · MAC · serial · 역할"]
+    LOCAL --> VALIDATE["cluster.sh validate + render<br/>중복 값 · controller 홀수 · LVM 역할 검사"]
+    VALIDATE --> REVIEW{"렌더 결과 직접 검토<br/>control/network: cloud01-03<br/>compute: 활성 호스트 전체<br/>storage LVM: cloud01만?"}
+    REVIEW -->|"아니요"| FIX["입력 수정<br/>배포하지 않음"]
+    FIX --> LOCAL
+    REVIEW -->|"예"| HOSTS["prepare-hosts → 신규 노드 재부팅<br/>verify-hosts"]
+    HOSTS --> PROVIDER["OpenWrt discover → plan<br/>새 tagged port와 probe 대상 검토"]
+    PROVIDER --> ROUTERGATE{"APPLY-OPENWRT + CONFIRM-OPENWRT<br/>두 확인값이 plan과 정확히 일치?"}
+    ROUTERGATE -->|"아니요"| ROUTERSTOP["자동 중단<br/>OpenWrt 변경 없음"]
+    ROUTERGATE -->|"예"| ROUTERAPPLY["openwrt-apply transaction<br/>백업·rollback guard → 설정 적용<br/>router/모든 host probe → confirm"]
+    ROUTERAPPLY --> BACKUP["외부 백업 + 복원 시험<br/>passwords · DB · clouds.yaml · state · volume/image"]
+    BACKUP --> TOKEN{"확인 문자열이 정확한가?<br/>EXPAND-OPENSTACK:<br/>cloud01,...,마지막 활성 호스트"}
+    TOKEN -->|"불일치"| STOP["자동 중단<br/>Kolla 변경 없음"]
+    TOKEN -->|"일치"| EXPAND["cluster.sh expand-openstack"]
+
+    subgraph KOLLA["확장 명령 내부"]
+        direction TB
+        K1["호스트 재검증"] --> K2["MariaDB 전체 백업"]
+        K2 --> K3["전체 인벤토리 facts + bootstrap"]
+        K3 --> K4["precheck + image pull + deploy"]
+        K4 --> K5["post-deploy + container/API 검사"]
+    end
+
+    EXPAND --> K1
+    K5 --> AUTOVERIFY{"verify-openstack 자동 검사<br/>admin token · nova-compute 수/상태<br/>hypervisor · Skyline 정상?<br/>Neutron agent/Cinder service 목록 출력"}
+    AUTOVERIFY -->|"실패"| HOLD["다음 노드 추가 중단<br/>백업과 Kolla 로그로 복구"]
+    AUTOVERIFY -->|"통과"| MANUAL{"운영자 수동 시험<br/>Neutron/Cinder 목록이 예상과 일치?<br/>VM 생성 · FIP · volume attach<br/>anti-affinity · 필요 시 migration 정상?"}
+    MANUAL -->|"실패"| HOLD
+    MANUAL -->|"통과"| NEXT["현재 단계 완료<br/>필요할 때 다음 compute 노드 편입"]
+
+    classDef gate fill:#fef3c7,stroke:#d97706,color:#78350f;
+    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    classDef done fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    class REVIEW,ROUTERGATE,TOKEN,AUTOVERIFY,MANUAL gate;
+    class ROUTERSTOP,STOP,HOLD stop;
+    class NEXT done;
+```
 
 bootstrap과 deploy는 별개 명령으로 구현되어 있다. 일반적인 설정 변경에는
 `openstack.sh reconfigure`를 사용하고, 새 물리 호스트 편입에는 deploy 절차를 사용한다.
