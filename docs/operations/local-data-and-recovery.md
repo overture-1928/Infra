@@ -52,7 +52,7 @@ Git clone만으로는 환경을 복구할 수 없다. 로컬 입력, credential�
 | `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | cloud01 HBA의 정확한 PCI 주소, vendor/product ID와 alias |
 | `kolla/config/nova.conf` | `kolla/config/nova.conf.example` | nova-api와 compute가 공유할 `storage-hba` alias |
 
-기본 구축에 필요한 처음 네 파일은 다음처럼 기존 파일을 덮어쓰지 않고 만든다.
+기본 구축에 필요한 로컬 파일은 다음처럼 기존 파일을 덮어쓰지 않고 만든다.
 
 ```bash
 umask 077

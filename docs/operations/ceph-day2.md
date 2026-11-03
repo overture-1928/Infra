@@ -7,6 +7,39 @@
 `osd-plan/osd-apply`는 계속 빈 cluster 전용이며 운영 추가에는
 `osd-expand-plan/osd-expand-apply/osd-expand-status`만 사용한다.
 
+## 실행 위치와 전체 순서
+
+이 절차는 최초 3노드 Ceph와 OpenStack 구축이 끝난 뒤, Ceph bootstrap host인 `cloud01`에서
+저장소 루트를 현재 디렉터리로 두고 실행한다. 세 storage host가 모두 켜져 있고 SSH로 접근 가능해야
+한다. 새 디스크를 장착했더라도 아래 plan이 통과하기 전에는 partition, filesystem, LVM PV를 만들지
+않는다.
+
+```mermaid
+flowchart LR
+  DISK["세 host에 같은 class 디스크 장착"]
+  ID["by-id · serial · FSID · OSD 수 확인"]
+  CONFIG["topology와 change 파일 작성"]
+  PLAN["osd-expand-plan"]
+  REVIEW["dry-run · manifest · SHA 검토"]
+  APPLY["osd-expand-apply"]
+  STATUS["osd-expand-status"]
+  DONE["목표 OSD 수 · up/in · HEALTH_OK"]
+
+  DISK --> ID --> CONFIG --> PLAN --> REVIEW --> APPLY --> STATUS --> DONE
+  STATUS -->|복구 진행 중| STATUS
+```
+
+| 단계 | 작업 | 다음 단계 조건 |
+| --- | --- | --- |
+| 장착 | 같은 class와 비슷한 용량의 디스크를 세 storage host에 균형 장착 | 세 host에서 안정적인 by-id와 serial 확인 |
+| 입력 | topology에는 전체 OSD 장치, change 파일에는 이번 추가 장치만 기록 | FSID와 현재 OSD 수가 실제 cluster와 일치 |
+| Plan | 장치 preflight와 cephadm dry-run 실행 | 모든 검사 성공, 예상 OSD 수와 대상 장치 검토 |
+| Apply | 출력된 SHA 확인값으로 동일 manifest 제출 | cephadm이 의도한 OSD만 생성 |
+| 완료 | recovery/backfill, OSD class와 Cinder I/O 확인 | 목표 OSD 수, 모든 OSD `up/in`, `HEALTH_OK` |
+
+이 작업 전에 [백업과 복원](backup-and-restore.md)의 최근 복원 검증과
+[관측과 알림](observability.md)의 Ceph·디스크 경보가 준비돼 있어야 한다.
+
 ## 변경 원칙
 
 ```mermaid

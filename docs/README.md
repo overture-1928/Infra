@@ -77,6 +77,7 @@ flowchart TB
 | 물리 호스트 | `cluster.sh prepare-hosts/verify-hosts` |
 | OpenWrt | `cluster.sh openwrt-discover/plan/apply/status` |
 | Ceph | `ceph-cluster.sh validate/preflight/bootstrap/...` |
+| Ceph 운영 OSD 증설 | `ceph-cluster.sh osd-expand-plan/apply/status` |
 | OpenStack | `cluster.sh deploy-openstack/verify-openstack` |
 | management Kubernetes | `cluster.sh terraform-plan/apply`, `cluster.sh deploy-kubernetes` |
 | 일반 VM | `cluster.sh workload-new/plan/show/apply` |
