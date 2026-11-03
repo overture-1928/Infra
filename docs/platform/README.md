@@ -6,6 +6,7 @@
 | 문서 | 용도 |
 | --- | --- |
 | [Magnum·CAPI 관리형 서비스](managed-services.md) | CAPI/CAPO/ORC, Magnum, Octavia와 Hosted Control Plane 경계 |
+| [관리형 Kubernetes 3티어 workload](../workloads/kubernetes-three-tier.md) | workload cluster의 ingress, NetworkPolicy와 Cinder PVC |
 
 물리 OpenStack host 확장이 필요하다면 관리형 플랫폼을 활성화하기 전에 먼저 완료한다.
 

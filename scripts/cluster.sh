@@ -140,7 +140,8 @@ Usage: scripts/cluster.sh COMMAND [ARGUMENTS]
   verify-openstack     verify APIs and registered OpenStack services
   terraform-plan       create a reviewed Kubernetes infrastructure plan
   terraform-apply      apply that saved plan serially (confirmation)
-  workload-new STACK   create an isolated Terraform workload stack from the template
+  workload-new STACK [standard|three-tier-vm]
+                       create an isolated Terraform workload stack from a selected template
   workload-plan STACK  save a reviewable plan for one workload stack
   workload-show STACK  show a saved workload plan and its SHA-256 confirmation
   workload-apply STACK apply the exact saved workload plan serially (confirmation)

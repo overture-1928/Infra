@@ -80,6 +80,7 @@ flowchart TB
 | OpenStack | `cluster.sh deploy-openstack/verify-openstack` |
 | management Kubernetes | `cluster.sh terraform-plan/apply`, `cluster.sh deploy-kubernetes` |
 | 일반 VM | `cluster.sh workload-new/plan/show/apply` |
+| Neutron 3티어 VM | `cluster.sh workload-new <stack> three-tier-vm` 후 일반 workload 명령 |
 | VM guest 구성 | `cluster.sh workload-inventory/configure` |
 | 관리형 플랫폼 | `cluster.sh platform-plan/apply/status` |
 | K0smotron 초안 | `cluster.sh hosted-plan` (렌더링만, apply하지 않음) |

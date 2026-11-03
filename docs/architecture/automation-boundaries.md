@@ -127,6 +127,9 @@ secret 처리 방식은 해당 playbook에 명시하며 자동으로 생성하�
 - settings 또는 생성 inventory의 권한이 `0600`이 아닌 경우
 
 자세한 작업 순서는 [서비스별 Terraform workload](../workloads/terraform.md)를 따른다.
+3티어 profile은 Terraform이 Neutron network·subnet·router와 tier security group까지 관리하며,
+guest 내부 Web·Application·Database 구성과 복제는 stack별 Ansible playbook이 담당한다. 구체적인
+경계는 [Neutron 3티어 workload](../workloads/three-tier.md)를 따른다.
 
 ## cloud01 고정 PCI VM
 

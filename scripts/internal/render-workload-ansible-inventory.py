@@ -24,8 +24,17 @@ ALLOWED_SETTINGS = {
 RESERVED_GROUP_VARS = {"workload_name"}
 RESERVED_HOST_VARS = {
     "ansible_host",
+    "openstack_data_volume_id",
     "openstack_instance_id",
+    "openstack_port_id",
+    "openstack_root_volume_id",
     "terraform_instance_key",
+    "workload_tier",
+}
+TIER_GROUPS = {
+    "web": "workload_web",
+    "application": "workload_application",
+    "database": "workload_database",
 }
 
 
@@ -141,6 +150,7 @@ def render(stack: str, instances: dict, settings: dict) -> dict:
         fail(f"group_vars cannot override reserved variable(s): {', '.join(forbidden_group)}")
 
     hosts: dict[str, dict] = {}
+    tier_hosts: dict[str, dict[str, dict]] = {group: {} for group in TIER_GROUPS.values()}
     consumed_host_vars: set[str] = set()
     for instance_key in sorted(instances):
         instance = instances[instance_key]
@@ -154,6 +164,13 @@ def render(stack: str, instances: dict, settings: dict) -> dict:
             fail(f"instances.{instance_key}.instance_name must be a non-empty string")
         if not isinstance(instance_id, str) or not instance_id:
             fail(f"instances.{instance_key}.instance_id must be a non-empty string")
+        port_id = require_optional_string(instance.get("port_id"), f"instances.{instance_key}.port_id")
+        root_volume_id = require_optional_string(
+            instance.get("root_volume_id"), f"instances.{instance_key}.root_volume_id"
+        )
+        data_volume_id = require_optional_string(
+            instance.get("data_volume_id"), f"instances.{instance_key}.data_volume_id"
+        )
         if instance_name in hosts:
             fail(f"duplicate OpenStack instance name in Terraform output: {instance_name}")
 
@@ -167,12 +184,27 @@ def render(stack: str, instances: dict, settings: dict) -> dict:
                 + ", ".join(forbidden_host)
             )
         consumed_host_vars.add(instance_key)
-        hosts[instance_name] = {
+        tier = instance.get("tier")
+        if tier is not None and tier not in TIER_GROUPS:
+            fail(
+                f"instances.{instance_key}.tier must be web, application, database, or omitted"
+            )
+        host = {
             "ansible_host": select_address(instance, instance_key, source),
             "openstack_instance_id": instance_id,
             "terraform_instance_key": instance_key,
             **extra,
         }
+        if port_id is not None:
+            host["openstack_port_id"] = port_id
+        if root_volume_id is not None:
+            host["openstack_root_volume_id"] = root_volume_id
+        if data_volume_id is not None:
+            host["openstack_data_volume_id"] = data_volume_id
+        if tier is not None:
+            host["workload_tier"] = tier
+            tier_hosts[TIER_GROUPS[tier]][instance_name] = dict(host)
+        hosts[instance_name] = host
 
     if not hosts:
         fail("Terraform output contains no workload instances")
@@ -191,16 +223,16 @@ def render(stack: str, instances: dict, settings: dict) -> dict:
     if common_args is not None:
         connection_vars["ansible_ssh_common_args"] = common_args
 
-    return {
-        "all": {
-            "children": {
-                "workload": {
-                    "hosts": hosts,
-                    "vars": connection_vars,
-                }
-            }
+    children = {
+        "workload": {
+            "hosts": hosts,
+            "vars": connection_vars,
         }
     }
+    for group, grouped_hosts in tier_hosts.items():
+        if grouped_hosts:
+            children[group] = {"hosts": grouped_hosts}
+    return {"all": {"children": children}}
 
 
 def atomic_write(path: Path, value: dict) -> None:

@@ -5,6 +5,8 @@
 | 문서 | 용도 |
 | --- | --- |
 | [Terraform workload](terraform.md) | stack별 VM, volume, state와 자동 생성 Ansible inventory |
+| [Neutron VM 3티어 workload](three-tier.md) | 일반 VM용 Web·Application·Database network, security group과 HA |
+| [관리형 Kubernetes 3티어](kubernetes-three-tier.md) | Neutron/Octavia/Cinder와 CNI NetworkPolicy의 역할 분리 |
 | [PCI 패스스루 VM](pci-passthrough.md) | cloud01 GPU 전용 VM, VFIO, Nova alias와 고정 배치 |
 | [스토리지 VM](storage-vm.md) | 4TB·3TB HDD용 HBA 패스스루와 guest 디스크 구성 |
 

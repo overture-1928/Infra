@@ -15,3 +15,7 @@
 
 `scripts/cluster.sh workload-configure web`은 inventory를 다시 생성한 다음
 `ansible/playbooks/workloads/web.yml`을 실행한다.
+
+Neutron 3티어 profile은 `workload_web`, `workload_application`, `workload_database` 그룹을
+추가한다. Database부터 구성하고 각 tier를 `serial: 1`로 갱신하는 예시는
+`docs/workloads/three-tier.md`를 따른다.

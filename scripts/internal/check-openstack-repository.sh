@@ -204,7 +204,13 @@ for node in cluster_example["nodes"].values():
 assert ipaddress.ip_network(plan["openstack"]["external_cidr"]) == ipaddress.ip_network("198.51.100.0/24")
 assert ipaddress.ip_network(plan["openstack"]["tenant_cidr"]) == ipaddress.ip_network("203.0.113.0/24")
 
-public_roots = [Path("README.md"), Path("docs"), Path("inventory"), Path("scripts")]
+public_roots = [
+    Path("README.md"),
+    Path("docs"),
+    Path("inventory"),
+    Path("kubernetes"),
+    Path("scripts"),
+]
 home_prefix = "/" + "home" + "/"
 for root in public_roots:
     paths = [root] if root.is_file() else root.rglob("*")
@@ -249,6 +255,8 @@ markdown_sources = [
     Path("terraform/README.md"),
     Path("ansible/playbooks/README.md"),
     Path("terraform/workloads/_template/README.md"),
+    Path("terraform/workloads/_three-tier-vm-template/README.md"),
+    Path("kubernetes/workloads/three-tier/README.md"),
     *sorted(Path("docs").rglob("*.md")),
 ]
 for source in markdown_sources:
@@ -279,6 +287,9 @@ for visual_guide in (
     "docs/workloads/terraform.md",
     "docs/architecture/automation-boundaries.md",
     "docs/workloads/pci-passthrough.md",
+    "docs/workloads/three-tier.md",
+    "docs/workloads/kubernetes-three-tier.md",
+    "docs/architecture/managed-cloud-equivalence.md",
 ):
     assert "```mermaid" in Path(visual_guide).read_text(), f"{visual_guide} needs a Mermaid diagram"
 
@@ -539,6 +550,7 @@ assert required and required.group(1) == terraform_cli
 for terraform_versions in (
     Path("terraform/modules/openstack-vm/versions.tf"),
     Path("terraform/workloads/_template/versions.tf"),
+    Path("terraform/workloads/_three-tier-vm-template/versions.tf"),
 ):
     text = terraform_versions.read_text()
     match = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', text)
@@ -617,6 +629,59 @@ assert 'cloud_context_sha256' in workload_script
 assert 'tfplan.context.json' in workload_script
 assert 'for template_file in "${template_files[@]}"' in workload_script
 assert 'cp -a "$template_dir/."' not in workload_script
+assert 'three-tier-vm' in workload_script
+three_tier_template = Path("terraform/workloads/_three-tier-vm-template")
+for filename in (
+    ".terraform.lock.hcl",
+    "README.md",
+    "main.tf",
+    "outputs.tf",
+    "providers.tf",
+    "terraform.tfvars.example",
+    "variables.tf",
+    "versions.tf",
+):
+    assert (three_tier_template / filename).is_file(), f"three-tier template omits {filename}"
+three_tier_main = (three_tier_template / "main.tf").read_text()
+for required_term in (
+    'resource "openstack_networking_network_v2" "web"',
+    'resource "openstack_networking_network_v2" "application"',
+    'resource "openstack_networking_network_v2" "database"',
+    'resource "openstack_networking_router_v2" "this"',
+    "remote_group_id",
+    'policies = ["soft-anti-affinity"]',
+    'resource "openstack_blockstorage_volume_v3" "database_data"',
+):
+    assert required_term in three_tier_main, f"three-tier template omits {required_term}"
+for forbidden_term in ("floating_ip_pool", "floating_ip_subnet_id", "associate_floating_ip"):
+    assert forbidden_term not in three_tier_main, f"three-tier template exposes direct VM Floating IPs: {forbidden_term}"
+three_tier_doc = Path("docs/workloads/three-tier.md").read_text()
+for required_term in ("Neutron", "remote_group_id", "workload_web", "workload_application", "workload_database"):
+    assert required_term in three_tier_doc, f"three-tier guide omits {required_term}"
+managed_three_tier_doc = Path("docs/workloads/kubernetes-three-tier.md").read_text()
+for required_term in ("NetworkPolicy", "Octavia", "Cinder CSI", "three-tier-vm"):
+    assert required_term in managed_three_tier_doc, f"managed three-tier guide omits {required_term}"
+managed_cloud_doc = Path("docs/architecture/managed-cloud-equivalence.md").read_text()
+for required_term in ("AWS", "Azure", "GCP", "Cluster Autoscaler", "관리형 DB"):
+    assert required_term in managed_cloud_doc, f"managed-cloud target omits {required_term}"
+network_policy_path = Path("kubernetes/workloads/three-tier/network-policies.example.yml")
+network_policy_documents = list(yaml.safe_load_all(network_policy_path.read_text()))
+network_policy_names = {
+    document["metadata"]["name"]
+    for document in network_policy_documents
+    if isinstance(document, dict) and document.get("kind") == "NetworkPolicy"
+}
+for required_policy in (
+    "default-deny",
+    "allow-dns",
+    "ingress-to-web",
+    "web-to-application",
+    "application-from-web",
+    "application-to-database",
+    "database-from-application",
+    "database-peer",
+):
+    assert required_policy in network_policy_names, f"NetworkPolicy example omits {required_policy}"
 for command in ("workload-plan", "workload-apply", "workload-inventory", "workload-configure"):
     assert command in cluster_script, command
 inventory_renderer = Path("scripts/internal/render-workload-ansible-inventory.py")
@@ -1800,6 +1865,7 @@ cp ansible/inventory/workloads/settings.example.yml \
   "$workload_repo/ansible/inventory/workloads/"
 cp -a terraform/modules/openstack-vm "$workload_repo/terraform/modules/"
 cp -a terraform/workloads/_template "$workload_repo/terraform/workloads/"
+cp -a terraform/workloads/_three-tier-vm-template "$workload_repo/terraform/workloads/"
 printf 'fake certificate authority\n' >"$workload_repo/ca.pem"
 cat >"$workload_repo/cloud-a.yaml" <<YAML
 clouds:
@@ -1884,8 +1950,12 @@ case "$operation" in
   output)
     if [[ " $* " == *" -json instances "* ]]; then
       stack=$(basename "$workdir")
-      printf '{"node-01":{"instance_id":"instance-%s","instance_name":"%s-node-01","fixed_ips":["10.20.0.11"],"floating_ip":"198.51.100.61"}}\n' \
-        "$stack" "$stack"
+      if [[ $stack == three ]]; then
+        printf '{"web-01":{"instance_id":"instance-three-web","instance_name":"three-web-01","fixed_ips":["10.30.10.11"],"floating_ip":null,"tier":"web"},"application-01":{"instance_id":"instance-three-app","instance_name":"three-application-01","fixed_ips":["10.30.20.11"],"floating_ip":null,"tier":"application"},"database-01":{"instance_id":"instance-three-db","instance_name":"three-database-01","fixed_ips":["10.30.30.11"],"floating_ip":null,"data_volume_id":"volume-three-db","tier":"database"}}\n'
+      else
+        printf '{"node-01":{"instance_id":"instance-%s","instance_name":"%s-node-01","fixed_ips":["10.20.0.11"],"floating_ip":"198.51.100.61"}}\n' \
+          "$stack" "$stack"
+      fi
     else
       printf 'instances = {}\n'
     fi
@@ -1915,9 +1985,18 @@ if (cd "$workload_repo" && "$workload_cli" new aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   echo 'Workload wrapper accepted a stack name longer than 63 characters.' >&2
   exit 1
 fi
+if (cd "$workload_repo" && "$workload_cli" new invalid unknown >/dev/null 2>&1); then
+  echo 'Workload wrapper accepted an unknown profile.' >&2
+  exit 1
+fi
 
 (cd "$workload_repo" && "$workload_cli" new app >/dev/null)
 (cd "$workload_repo" && "$workload_cli" new database >/dev/null)
+(cd "$workload_repo" && "$workload_cli" new three three-tier-vm >/dev/null)
+grep -Fq 'openstack_networking_router_v2' \
+  "$workload_repo/terraform/workloads/three/main.tf"
+[[ $(stat -c '%a' "$workload_repo/terraform/workloads/three/terraform.tfvars") == 600 ]]
+[[ $(stat -c '%a' "$workload_repo/ansible/inventory/workloads/three.local.yml") == 600 ]]
 for contaminated_path in \
   terraform.tfstate \
   .terraform/provider-sentinel \
@@ -2137,6 +2216,25 @@ host = workload["hosts"]["app-node-01"]
 assert host["ansible_host"] == "198.51.100.61"
 assert host["terraform_instance_key"] == "node-01"
 assert host["openstack_instance_id"] == "instance-app"
+PY
+(cd "$workload_repo" && \
+  OS_CLIENT_CONFIG_FILE=cloud-a.yaml TERRAFORM_BIN="$fake_terraform" FAKE_TERRAFORM_LOG="$fake_log" \
+  "$workload_cli" inventory three >/dev/null)
+three_inventory="$workload_repo/.cache/ansible/workloads/three.yml"
+python3 - "$three_inventory" <<'PY'
+import sys
+from pathlib import Path
+
+import yaml
+
+inventory = yaml.safe_load(Path(sys.argv[1]).read_text())
+children = inventory["all"]["children"]
+assert set(children["workload_web"]["hosts"]) == {"three-web-01"}
+assert set(children["workload_application"]["hosts"]) == {"three-application-01"}
+assert set(children["workload_database"]["hosts"]) == {"three-database-01"}
+assert children["workload_web"]["hosts"]["three-web-01"]["workload_tier"] == "web"
+assert children["workload_database"]["hosts"]["three-database-01"]["workload_tier"] == "database"
+assert children["workload_database"]["hosts"]["three-database-01"]["openstack_data_volume_id"] == "volume-three-db"
 PY
 ln -s ../app/.terraform "$workload_repo/terraform/workloads/database/.terraform"
 if (cd "$workload_repo" && \

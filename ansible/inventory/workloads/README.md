@@ -15,3 +15,7 @@ chmod 0600 ansible/inventory/workloads/web.local.yml
 `address_source`는 `auto`, `floating`, `fixed` 중 하나다. `auto`는 Floating IP가 있으면
 우선 사용하고 없으면 정렬된 첫 번째 fixed IP를 사용한다. `host_vars`의 키는 workload의
 Terraform `instances` map key와 같아야 한다.
+
+3티어 profile의 output에는 `tier`가 포함되므로 renderer가 `workload_web`,
+`workload_application`, `workload_database` 그룹을 추가한다. App·DB fixed IP로 직접 route가
+없으면 `ansible_ssh_common_args`에 운영자가 검토한 SSH ProxyJump를 설정한다.

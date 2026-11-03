@@ -7,6 +7,7 @@
 | [네트워크 설계](networking.md) | 관리, Provider VLAN, Ceph 10Gbps와 tenant 망을 어떻게 분리하는가? |
 | [자동화 경계](automation-boundaries.md) | 어떤 단계가 자동화됐고 어떤 작업은 별도 검토가 필요한가? |
 | [현재 한계와 운영 전 검토](current-limitations.md) | 물리 장애, 디스크 class, state와 관측에서 무엇이 아직 보장되지 않는가? |
+| [관리형 클라우드 대응 목표](managed-cloud-equivalence.md) | AWS·Azure·GCP와 비슷한 사용자 경험에 무엇이 있고 무엇이 부족한가? |
 
 실제 설치 명령은 [3노드 설치 런북](../getting-started/installation.md), 장애와 변경 상황은
 [상황별 운영 가이드](../operations/scenarios.md)를 따른다.

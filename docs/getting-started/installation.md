@@ -347,6 +347,9 @@ ansible-inventory -i .cache/ansible/workloads/web.yml --graph
 뒤 `workload-configure`를 명시적으로 실행한다. `terraform.tfvars`, `<stack>.local.yml`,
 Terraform state와 생성 inventory는 Git에서 제외하며 외부의 암호화 저장소에 백업한다. 자세한
 입력, 확인값과 실패 조건은 [서비스별 Terraform workload](../workloads/terraform.md)를 따른다.
+Web·Application·Database를 Neutron으로 분리할 때는
+[Neutron VM 3티어 workload](../workloads/three-tier.md)의 `workload-new <stack> three-tier-vm` profile을
+사용한다.
 
 ## 11. 이후 작업
 

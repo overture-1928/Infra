@@ -1,0 +1,50 @@
+# Keep this false until the Neutron networks, security rules and every VM have been reviewed.
+enable_resources = false
+workload_name    = "example-three-tier"
+cloud_name       = "admin"
+
+# Existing OpenStack resources. Replace every placeholder UUID and ID.
+external_network_id  = "00000000-0000-4000-8000-000000000001"
+image_id             = "00000000-0000-4000-8000-000000000002"
+web_flavor_id        = "1"
+application_flavor_id = "2"
+database_flavor_id   = "3"
+key_pair             = "REPLACE_WITH_EXISTING_KEYPAIR"
+
+# Neutron creates three tenant networks and connects them to one router.
+web_cidr           = "10.30.10.0/24"
+web_gateway        = "10.30.10.1"
+application_cidr   = "10.30.20.0/24"
+application_gateway = "10.30.20.1"
+database_cidr      = "10.30.30.0/24"
+database_gateway   = "10.30.30.1"
+dns_nameservers    = ["192.0.2.53"]
+
+# Replace these with the operator and reverse-proxy/Octavia source CIDRs.
+admin_cidr    = "192.0.2.0/24"
+ingress_cidrs = ["198.51.100.0/24"]
+
+web_ports         = [80, 443]
+application_ports = [8080]
+database_ports    = [5432]
+
+root_volume_type          = "ceph-rbd"
+database_data_volume_type = "ceph-rbd"
+
+# All workload VMs remain private. Octavia or the approved reverse proxy owns the public address.
+
+web_instances = {
+  "01" = { fixed_ip = "10.30.10.11" }
+  "02" = { fixed_ip = "10.30.10.12" }
+}
+
+application_instances = {
+  "01" = { fixed_ip = "10.30.20.11" }
+  "02" = { fixed_ip = "10.30.20.12" }
+}
+
+database_instances = {
+  "01" = { fixed_ip = "10.30.30.11", data_volume_size = 100 }
+  "02" = { fixed_ip = "10.30.30.12", data_volume_size = 100 }
+  "03" = { fixed_ip = "10.30.30.13", data_volume_size = 100 }
+}

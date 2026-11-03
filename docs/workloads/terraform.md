@@ -11,15 +11,18 @@ Terraform root로 만든다. 각 root는 자신의 변수, plan과 state만 읽�
 flowchart LR
   PLATFORM["terraform/openstack/<br/>management Kubernetes·공용 기반 자원<br/>독립 state"]
   TEMPLATE["terraform/workloads/_template/<br/>추적되는 root 템플릿"]
+  THREE["terraform/workloads/_three-tier-vm-template/<br/>Neutron VM Web·App·DB 템플릿"]
   MODULE["terraform/modules/openstack-vm/<br/>공통 VM·boot volume 모듈"]
 
   TEMPLATE -->|"workload-new web"| WEB["terraform/workloads/web/<br/>web VM 묶음·web state"]
   TEMPLATE -->|"workload-new database"| DB["terraform/workloads/database/<br/>database VM 묶음·database state"]
   TEMPLATE -->|"workload-new ci"| CI["terraform/workloads/ci/<br/>CI VM 묶음·CI state"]
+  THREE -->|"workload-new myapp three-tier-vm"| APP3["terraform/workloads/myapp/<br/>VM 3티어 전체·독립 state"]
 
   MODULE --> WEB
   MODULE --> DB
   MODULE --> CI
+  MODULE --> APP3
   PLATFORM -.->|"OpenStack에서 조회한 network·subnet UUID"| WEB
   PLATFORM -.->|"OpenStack에서 조회한 network·subnet UUID"| DB
   PLATFORM -.->|"OpenStack에서 조회한 network·subnet UUID"| CI
@@ -27,8 +30,8 @@ flowchart LR
 
 `terraform/openstack/`은 Kubernetes/platform 전용 root와 state로 계속 유지한다.
 `terraform/modules/openstack-vm/`은 직접 초기화하거나 적용하는 root가 아니다.
-`terraform/workloads/_template/`도 복사 원본이므로 그 디렉터리에서 `terraform apply`를
-실행하지 않는다.
+`terraform/workloads/_template/`과 `_three-tier-vm-template/`도 복사 원본이므로 해당
+디렉터리에서 `terraform apply`를 실행하지 않는다.
 
 VM 생성과 guest 구성의 전체 호출 관계는 다음과 같다.
 
@@ -75,6 +78,7 @@ terraform/
 │   └── openstack-vm/          # 여러 workload root가 호출하는 공통 모듈
 └── workloads/
     ├── _template/             # 추적되는 새 root 원본
+    ├── _three-tier-vm-template/ # Neutron VM Web·Application·Database 원본
     ├── web/                   # web 서비스 root와 로컬 state
     ├── database/              # database 서비스 root와 로컬 state
     └── ci/                    # CI 서비스 root와 로컬 state
@@ -101,7 +105,16 @@ export OS_CLIENT_CONFIG_FILE="$PWD/terraform/openstack/clouds.yaml"
 ./scripts/cluster.sh workload-new web
 ```
 
-`workload-new`는 `_template`의 정해진 `*.tf`, `.terraform.lock.hcl`, `README.md`와
+Web·Application·Database를 서로 다른 Neutron network와 security group으로 만드는 경우에는
+3티어 profile을 지정한다. 세부 network와 traffic matrix는
+[Neutron 3티어 workload](three-tier.md)를 따른다.
+
+```bash
+./scripts/cluster.sh workload-new myapp three-tier-vm
+```
+
+`workload-new`는 선택한 `_template` 또는 `_three-tier-vm-template`의 정해진 `*.tf`,
+`.terraform.lock.hcl`, `README.md`와
 `terraform.tfvars.example`만 `terraform/workloads/web/`로 복사하고 example에서 mode
 `0600`의 `terraform.tfvars`를 만든다. 템플릿 아래에 우연히 남은 state, provider cache,
 credential과 override 파일은 복사하지 않는다. 스택 이름은
@@ -206,6 +219,9 @@ VM·포트·Floating IP 등의 출력을 읽는다. `security_group_id`와
 `instances[<key>].{instance_id,instance_name,port_id,fixed_ips,root_volume_id,floating_ip}`를
 이후 운영 입력에 사용할 수 있다.
 
+3티어 profile의 `instances` output은 같은 필드에 `tier`와 선택적 `data_volume_id`를 추가하고,
+network와 security group ID를 별도 output으로 제공한다.
+
 ## Ansible inventory 자동 생성
 
 `workload-new`는 Terraform root와 함께
@@ -232,8 +248,9 @@ Floating IP를 우선 사용한다. Terraform `instances` map key별 변수가 �
 ```
 
 서비스 설정은 `ansible/playbooks/workloads/web.yml`에 작성하고 생성 inventory의 `workload`
-그룹을 대상으로 한다. 다음 명령은 최신 Terraform output으로 inventory를 다시 생성한 뒤 해당
-playbook을 실행한다.
+그룹을 대상으로 한다. 3티어 output은 `workload_web`, `workload_application`,
+`workload_database` 그룹도 만든다. 다음 명령은 최신 Terraform output으로 inventory를 다시
+생성한 뒤 해당 playbook을 실행한다.
 
 ```bash
 ./scripts/cluster.sh workload-configure web

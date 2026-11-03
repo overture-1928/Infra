@@ -156,8 +156,16 @@ OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 
 ./scripts/cluster.sh workload-configure web
 ```
 
+Web·Application·Database를 Neutron network와 security group으로 분리하는 서비스는 별도 profile로
+생성한다.
+
+```bash
+./scripts/cluster.sh workload-new myapp three-tier-vm
+```
+
 상세 입력과 안전 절차는
-[서비스별 Terraform workload](docs/workloads/terraform.md)를 따른다.
+[서비스별 Terraform workload](docs/workloads/terraform.md)와
+[Neutron 3티어 workload](docs/workloads/three-tier.md)를 따른다.
 
 ## 자동화 경계
 

@@ -8,7 +8,8 @@ source "$repo_dir/config/versions.env"
 
 terraform_bin=${TERRAFORM_BIN:-$repo_dir/.cache/terraform/bin/terraform}
 workloads_dir="$repo_dir/terraform/workloads"
-template_dir="$workloads_dir/_template"
+standard_template_dir="$workloads_dir/_template"
+three_tier_vm_template_dir="$workloads_dir/_three-tier-vm-template"
 cache_dir="$repo_dir/.cache/terraform/workloads"
 ansible_settings_dir="$repo_dir/ansible/inventory/workloads"
 ansible_settings_template="$ansible_settings_dir/settings.example.yml"
@@ -29,9 +30,10 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'HELP'
-Usage: scripts/internal/terraform-workload.sh COMMAND [STACK]
+Usage: scripts/internal/terraform-workload.sh COMMAND [STACK] [PROFILE]
 
-  new STACK      copy terraform/workloads/_template into a new workload stack
+  new STACK [PROFILE]
+                 copy a standard or three-tier-vm workload template (default: standard)
   plan STACK     initialize the stack and save a reviewable Terraform plan
   show STACK     show the saved plan and its SHA-256 confirmation value
   apply STACK    apply the exact saved plan serially (confirmation required)
@@ -41,7 +43,7 @@ Usage: scripts/internal/terraform-workload.sh COMMAND [STACK]
   help           show this help
 
 STACK must be 1-63 characters and match ^[a-z0-9][a-z0-9-]{0,62}$;
-_template cannot be operated on.
+PROFILE is standard or three-tier-vm. Template directories cannot be operated on.
 OpenStack credentials are read from OS_CLIENT_CONFIG_FILE, which defaults to
 /etc/kolla/clouds.yaml.
 Terraform ambient arguments, TF_VAR inputs, custom TF_DATA_DIR and non-default
@@ -71,6 +73,16 @@ require_stack_argument() {
   shift
   [[ $# -eq 1 ]] || fail "Usage: scripts/internal/terraform-workload.sh $operation STACK"
   validate_stack_name "$1"
+}
+
+require_new_arguments() {
+  [[ $# -ge 1 && $# -le 2 ]] || \
+    fail "Usage: scripts/internal/terraform-workload.sh new STACK [standard|three-tier-vm]"
+  validate_stack_name "$1"
+  case ${2:-standard} in
+    standard|three-tier-vm) ;;
+    *) fail "Unknown workload profile '${2:-}'; expected standard or three-tier-vm." ;;
+  esac
 }
 
 stack_path() {
@@ -472,9 +484,15 @@ print_confirmation() {
 }
 
 new_stack() {
-  local stack=$1 directory template_file cleanup_command settings
+  local stack=$1 profile=$2 directory template_dir template_file cleanup_command settings
   directory=$(stack_path "$stack")
   settings=$(ansible_settings_path "$stack")
+
+  case $profile in
+    standard) template_dir=$standard_template_dir ;;
+    three-tier-vm) template_dir=$three_tier_vm_template_dir ;;
+    *) fail "Unknown workload profile '$profile'." ;;
+  esac
 
   [[ -d $template_dir && ! -L $template_dir ]] || \
     fail "Workload template is missing: $template_dir"
@@ -505,7 +523,7 @@ new_stack() {
   fi
   trap - EXIT
 
-  printf 'Created workload stack: %s\n' "$directory"
+  printf 'Created %s workload stack: %s\n' "$profile" "$directory"
   printf 'Created workload Ansible settings: %s\n' "$settings"
   printf 'Edit %s, then run scripts/cluster.sh workload-plan %s.\n' \
     "$directory/terraform.tfvars" "$stack"
@@ -659,8 +677,8 @@ case "$command_name" in
     usage
     ;;
   new)
-    require_stack_argument new "$@"
-    new_stack "$1"
+    require_new_arguments "$@"
+    new_stack "$1" "${2:-standard}"
     ;;
   plan)
     require_stack_argument plan "$@"

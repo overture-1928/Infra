@@ -370,6 +370,11 @@ OpenStack server/port/volume/LoadBalancer를 함께 확인한다.
 생성만 성공하고 scale, delete 또는 orphan 검사가 실패하면 관리형 서비스는 아직 운영 준비가
 끝난 것이 아니다.
 
+workload cluster 위의 ingress, NetworkPolicy, Cinder PVC와 3티어 배포 기준은
+[관리형 Kubernetes 3티어](../workloads/kubernetes-three-tier.md)를 따른다. AWS EKS, Azure AKS와
+GCP GKE에 대응하는 autoscaling, DBaaS와 관측의 현재 구현 수준은
+[관리형 클라우드 대응 목표](../architecture/managed-cloud-equivalence.md)에 구분한다.
+
 Magnum용 `magnum-capi` ServiceAccount와 장기 token Secret은 `magnum-system`에 생성한다. 해당
 cluster-admin kubeconfig는 `kolla/generated/magnum/kubeconfig`에 mode `0600`으로 저장되고,
 Kolla가 `/etc/kolla/config/magnum/kubeconfig`로 복사한다. 두 파일은 관리 비밀로 취급한다.
