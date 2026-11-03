@@ -112,7 +112,8 @@ Aggregate의 host 문자열은 `openstack hypervisor list`에 표시되는 실�
 정확히 같아야 한다.
 
 ```bash
-sudo openstack hypervisor list
+export OS_CLIENT_CONFIG_FILE="$PWD/terraform/openstack/clouds.yaml"
+OS_CLOUD=admin .cache/kolla-venv/bin/openstack hypervisor list
 ./scripts/cluster.sh workload-plan storage
 ./scripts/cluster.sh workload-show storage
 ```

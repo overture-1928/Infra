@@ -7,6 +7,9 @@ OpenStack, management Kubernetes를 새로 설치하는 자동화다. 단일 노
 실제 장비에는 아직 적용되지 않았다. 공개 저장소의 IP, MAC, 디스크 시리얼은 예시이며
 `inventory/*.local.yml`에 실제 값을 넣기 전에는 설치를 시작하면 안 된다.
 
+처음 읽는 순서와 작업별 기준 문서는 [문서 안내](docs/README.md)에 정리되어 있다.
+구축 중단, 장애와 변경·확장 상황은 [상황별 운영 가이드](docs/operations-guide.md)에서 찾는다.
+
 ## 최종 구조
 
 ```mermaid
@@ -136,6 +139,20 @@ sudo ./scripts/cluster.sh verify-openstack
 [설치 런북](docs/openstack-runbook.md)에 있다. Ceph 초기 구축은
 [Ceph 초기 구축](docs/ceph-transition.md)을 따른다.
 
+OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 Ansible inventory를
+생성해 guest를 구성한다.
+
+```bash
+./scripts/cluster.sh workload-new web
+./scripts/cluster.sh workload-plan web
+# 저장된 plan 검토 후 workload-apply
+./scripts/cluster.sh workload-inventory web
+./scripts/cluster.sh workload-configure web
+```
+
+상세 입력과 안전 절차는
+[서비스별 Terraform workload](docs/terraform-workloads.md)를 따른다.
+
 ## 자동화 경계
 
 - Autoinstall은 각 노드의 `os_disk_serial`과 관리 NIC MAC이 일치할 때만 OS 디스크를 지운다.
@@ -144,6 +161,7 @@ sudo ./scripts/cluster.sh verify-openstack
 - OpenStack 배포는 세 노드 이상, `storage_backend: ceph`, 내보낸 Ceph client 설정을 요구한다.
 - Terraform은 세 management Kubernetes VM을 한 번에 만들며 모두 Ceph 부팅 볼륨을 사용한다.
 - 4TB·3TB HDD와 HBA 패스스루 VM은 OpenStack 검증 후 별도 Terraform workload로 만든다.
+- GPU 패스스루 VM도 cloud01 전용 Nova alias, aggregate와 Terraform workload로 분리한다.
 
 전체 승인 지점은 [자동화 경계](docs/automation-boundaries.md)에 정리되어 있다.
 
@@ -160,6 +178,8 @@ sudo ./scripts/cluster.sh verify-openstack
 | `scripts/ceph-cluster.sh` | cephadm 초기 cluster와 OSD/pool/client 구성 |
 | `terraform/openstack/` | tenant network와 management Kubernetes VM 3대 |
 | `terraform/workloads/` | 이후 애플리케이션·스토리지 VM별 독립 state |
+| `ansible/inventory/workloads/` | workload 접속 설정 예시와 ignored 로컬 설정 |
+| `.cache/ansible/workloads/` | Terraform output에서 생성한 private inventory |
 
 공개하면 안 되는 파일과 백업 위치는
 [로컬 설정·비밀·상태](docs/local-secrets-and-state.md)를 따른다.

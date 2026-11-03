@@ -16,3 +16,7 @@
 
 `internal/`은 위 진입점이 호출하는 렌더러, 도구 설치기와 하위 실행기다. 런북에서
 별도로 지시하지 않는 한 직접 실행하지 않는다.
+
+일반 VM은 `cluster.sh workload-new/plan/show/apply`로 관리하고, guest 구성은
+`cluster.sh workload-inventory/configure`로 실행한다. 상황별 명령 선택은
+[상황별 운영 가이드](../docs/operations-guide.md)를 따른다.

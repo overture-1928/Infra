@@ -25,6 +25,27 @@ flowchart TB
   VERIFY --> CEPH --> KOLLA --> TF --> K8S --> OPTIONAL
 ```
 
+각 단계는 다음 검증 지점을 통과한 뒤에만 다음 상태로 넘어간다. 중간에 중단되면 확인 문자열을
+다시 실행하기 전에 마지막으로 통과한 검증 지점부터 찾는다.
+
+```mermaid
+stateDiagram-v2
+  [*] --> LocalInput: 실제 topology 작성
+  LocalInput --> UbuntuReady: validate + 노드별 seed
+  UbuntuReady --> HostReady: prepare-hosts + reboot
+  HostReady --> NetworkReady: OpenWrt confirm + verify-hosts
+  NetworkReady --> CephReady: 3 OSD up/in + HEALTH_OK
+  CephReady --> CloudReady: Kolla deploy + verify-openstack
+  CloudReady --> VmReady: Terraform saved plan 적용
+  VmReady --> KubernetesReady: Kubespray 완료 + kubeconfig
+  KubernetesReady --> [*]
+
+  LocalInput --> LocalInput: validate 실패 시 입력 수정
+  HostReady --> HostReady: NIC·시간·mount 실패 수정
+  CephReady --> CephReady: health 정상화 전 변경 중단
+  CloudReady --> CloudReady: API·service 검증 실패 수정
+```
+
 ## 1. 장비와 로컬 입력 준비
 
 세 호스트에서 다음 값을 확인한다.
@@ -242,11 +263,15 @@ sudo ./scripts/cluster.sh verify-openstack
 중단한다. 다음을 확인한다.
 
 ```bash
-sudo ceph -s
-sudo openstack compute service list
-sudo openstack network agent list
-sudo openstack volume service list
-sudo openstack image list
+sudo cephadm shell -- ceph -s
+sudo env OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml OS_CLOUD=admin \
+  .cache/kolla-venv/bin/openstack compute service list
+sudo env OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml OS_CLOUD=admin \
+  .cache/kolla-venv/bin/openstack network agent list
+sudo env OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml OS_CLOUD=admin \
+  .cache/kolla-venv/bin/openstack volume service list
+sudo env OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml OS_CLOUD=admin \
+  .cache/kolla-venv/bin/openstack image list
 ```
 
 Skyline은 공개 예시 기준 `http://192.0.2.10:9999`다.
@@ -254,6 +279,10 @@ Skyline은 공개 예시 기준 `http://192.0.2.10:9999`다.
 ## 9. management Kubernetes 3대
 
 ```bash
+sudo install -m 0600 -o "$(id -u)" -g "$(id -g)" \
+  /etc/kolla/clouds.yaml terraform/openstack/clouds.yaml
+export OS_CLIENT_CONFIG_FILE="$PWD/terraform/openstack/clouds.yaml"
+
 cp terraform/openstack/terraform.tfvars.example \
   terraform/openstack/terraform.tfvars
 chmod 0600 terraform/openstack/terraform.tfvars
@@ -272,7 +301,45 @@ export TERRAFORM_APPLY_CONFIRM=APPLY-KUBERNETES-INFRA
 
 strict anti-affinity 때문에 세 control-plane VM은 서로 다른 compute host에 배치된다.
 
-## 10. 이후 작업
+## 10. 일반 workload VM과 서비스 구성
+
+OpenStack 구축 후 일반 VM은 stack별 Terraform root와 state로 관리한다. 다음 명령은 `web`
+stack의 코드와 mode `0600` 로컬 입력을 만든다.
+
+```bash
+./scripts/cluster.sh workload-new web
+${EDITOR:-vi} terraform/workloads/web/terraform.tfvars \
+  ansible/inventory/workloads/web.local.yml
+```
+
+처음에는 `enable_instances = false`로 cloud 인증, resource ID와 입력을 검증한다. 변경이 없는
+plan을 확인한 후 `true`로 바꾸고 다시 plan을 만든다.
+
+```bash
+./scripts/cluster.sh workload-plan web
+./scripts/cluster.sh workload-show web
+
+export TERRAFORM_WORKLOAD_APPLY_CONFIRM='APPLY-TERRAFORM-WORKLOAD:web:<plan-sha256>'
+./scripts/cluster.sh workload-apply web
+./scripts/cluster.sh workload-output web
+```
+
+guest 설정이 필요하면 `ansible/playbooks/workloads/web.yml`을 만들고 생성 inventory의
+`workload` 그룹을 대상으로 작성한다. Terraform output에서 접속 inventory를 먼저 확인한 뒤
+playbook을 실행한다.
+
+```bash
+./scripts/cluster.sh workload-inventory web
+ansible-inventory -i .cache/ansible/workloads/web.yml --graph
+./scripts/cluster.sh workload-configure web
+```
+
+`workload-apply`는 guest playbook을 자동 실행하지 않는다. Terraform 적용 결과와 IP를 검토한
+뒤 `workload-configure`를 명시적으로 실행한다. `terraform.tfvars`, `<stack>.local.yml`,
+Terraform state와 생성 inventory는 Git에서 제외하며 외부의 암호화 저장소에 백업한다. 자세한
+입력, 확인값과 실패 조건은 [서비스별 Terraform workload](terraform-workloads.md)를 따른다.
+
+## 11. 이후 작업
 
 OpenStack과 Ceph의 장애 시험, 외부 상태 백업, Kubernetes 검증이 끝난 뒤 다음을 진행한다.
 

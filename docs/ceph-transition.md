@@ -162,10 +162,10 @@ export 결과는 ignored `kolla/generated/ceph-config/`에 저장된다. `deploy
 다음 항목을 정기적으로 확인한다.
 
 ```bash
-sudo ceph -s
-sudo ceph df
-sudo ceph osd df tree
-sudo ceph orch ps
+sudo cephadm shell -- ceph -s
+sudo cephadm shell -- ceph df
+sudo cephadm shell -- ceph osd df tree
+sudo cephadm shell -- ceph orch ps
 ```
 
 ## 이후 SATA SSD/HDD 확장

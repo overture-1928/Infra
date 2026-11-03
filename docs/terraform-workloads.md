@@ -28,6 +28,38 @@ flowchart LR
 `terraform/workloads/_template/`도 복사 원본이므로 그 디렉터리에서 `terraform apply`를
 실행하지 않는다.
 
+VM 생성과 guest 구성의 전체 호출 관계는 다음과 같다.
+
+```mermaid
+sequenceDiagram
+  actor Operator as 운영자
+  participant Wrapper as cluster.sh
+  participant TF as Terraform workload
+  participant OS as OpenStack API
+  participant State as stack state
+  participant Renderer as inventory renderer
+  participant Ansible as Ansible
+  participant VM as workload VM
+
+  Operator->>Wrapper: workload-plan web
+  Wrapper->>TF: init + plan
+  TF->>OS: 기존 network/image/flavor 조회
+  TF-->>Wrapper: 저장된 tfplan + SHA-256
+  Wrapper-->>Operator: 확인 문자열 출력
+  Operator->>Wrapper: workload-show / workload-apply
+  Wrapper->>TF: 확인된 tfplan만 apply
+  TF->>OS: port + volume + instance 생성
+  TF->>State: resource ID와 output 기록
+  Operator->>Wrapper: workload-inventory web
+  Wrapper->>TF: instances output JSON 요청
+  TF->>State: output 읽기
+  Wrapper->>Renderer: output + local settings
+  Renderer-->>Operator: private inventory 생성
+  Operator->>Wrapper: workload-configure web
+  Wrapper->>Ansible: inventory + web.yml
+  Ansible->>VM: guest 설정 적용
+```
+
 ## 스택을 나누는 기준
 
 같이 생성·확장·백업·폐기하는 VM은 한 스택의 `instances` map에 둔다. 배포 시점, 담당자 또는

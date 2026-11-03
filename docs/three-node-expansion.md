@@ -85,14 +85,37 @@ sudo --preserve-env=OPENSTACK_EXPAND_CONFIRM \
 기존 VM은 자동으로 이동하지 않는다. Nova scheduler가 새 VM부터 추가 compute를 사용할 수
 있다.
 
+```mermaid
+sequenceDiagram
+  actor Operator as 운영자
+  participant Topology as local topology
+  participant Host as cloud04+
+  participant Router as OpenWrt
+  participant Kolla as Kolla-Ansible
+  participant DB as MariaDB backup
+  participant Nova as Nova scheduler
+
+  Operator->>Topology: 새 노드를 enabled=false로 추가
+  Operator->>Host: 노드별 Ubuntu 설치
+  Operator->>Topology: 검증 후 enabled=true
+  Operator->>Router: discover → plan → guarded apply
+  Operator->>Host: prepare-hosts → reboot → verify
+  Operator->>Kolla: expand-openstack 확인값 전달
+  Kolla->>DB: full backup
+  Kolla->>Host: bootstrap + deploy
+  Kolla->>Nova: compute service 등록
+  Nova-->>Operator: 새 VM부터 추가 compute에 배치 가능
+```
+
 ## 5. 확장 후 검사
 
 ```bash
 sudo ./scripts/cluster.sh verify-openstack
-sudo openstack compute service list
-sudo openstack hypervisor list
-sudo openstack network agent list
-sudo ceph -s
+export OS_CLIENT_CONFIG_FILE="$PWD/terraform/openstack/clouds.yaml"
+OS_CLOUD=admin .cache/kolla-venv/bin/openstack compute service list
+OS_CLOUD=admin .cache/kolla-venv/bin/openstack hypervisor list
+OS_CLOUD=admin .cache/kolla-venv/bin/openstack network agent list
+sudo cephadm shell -- ceph -s
 ```
 
 - 활성 compute 수가 topology와 같은지 확인한다.

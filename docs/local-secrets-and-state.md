@@ -13,6 +13,28 @@ Git에서 제외되는 로컬 입력 파일과 자동 생성되는 비밀 파일
    복사하지 않는다.
 4. 복구에 필요한 비밀과 상태는 저장소 밖의 암호화된 백업에 함께 보관한다.
 
+```mermaid
+flowchart LR
+  TRACKED["Git 추적<br/>코드 · example · template"]
+  LOCAL["Git ignored 로컬 입력<br/>IP · MAC · serial · tfvars"]
+  SECRET["생성 credential<br/>passwords · clouds · keyring · kubeconfig"]
+  STATE["운영 상태<br/>Terraform state · Kubespray applied state"]
+  CACHE["재생성 가능 cache<br/>inventory · plan · provider"]
+  BACKUP["저장소 밖 암호화 백업"]
+
+  TRACKED -->|복사 후 실제 값 입력| LOCAL
+  LOCAL -->|자동화 입력| SECRET
+  LOCAL -->|apply| STATE
+  LOCAL -->|render| CACHE
+  SECRET --> BACKUP
+  STATE --> BACKUP
+  LOCAL --> BACKUP
+  CACHE -. 다시 생성 .-> LOCAL
+```
+
+Git clone만으로는 환경을 복구할 수 없다. 로컬 입력, credential과 state를 같은 시점의 암호화
+백업으로 보관해야 한다.
+
 ## 직접 작성하는 로컬 입력
 
 | 로컬 파일 | 기준 파일 | 기록할 내용 |

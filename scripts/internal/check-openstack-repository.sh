@@ -220,6 +220,47 @@ local_data_doc = Path("docs/local-secrets-and-state.md")
 assert local_data_doc.is_file(), "the local secrets and state guide is missing"
 readme = Path("README.md").read_text()
 assert "docs/local-secrets-and-state.md" in readme, "README does not link the local data guide"
+docs_index_path = Path("docs/README.md")
+assert docs_index_path.is_file(), "the documentation index is missing"
+docs_index = docs_index_path.read_text()
+for guide in sorted(Path("docs").glob("*.md")):
+    if guide == docs_index_path:
+        continue
+    assert f"({guide.name})" in docs_index, f"documentation index omits {guide.name}"
+
+markdown_sources = [
+    Path("README.md"),
+    Path("scripts/README.md"),
+    Path("terraform/README.md"),
+    Path("ansible/playbooks/README.md"),
+    *sorted(Path("docs").glob("*.md")),
+]
+for source in markdown_sources:
+    assert source.is_file(), f"missing Markdown source: {source}"
+    source_text = source.read_text()
+    assert source_text.count("```") % 2 == 0, f"{source}: unbalanced fenced code block"
+    for target in re.findall(r"(?<!!)\[[^\]]+\]\(([^)]+)\)", source_text):
+        target = target.strip().split(maxsplit=1)[0].strip("<>")
+        if not target or target.startswith("#") or re.match(r"^[a-z][a-z0-9+.-]*:", target, re.I):
+            continue
+        relative_path = target.split("#", 1)[0]
+        resolved = (source.parent / relative_path).resolve()
+        assert resolved.exists(), f"{source}: broken relative Markdown link: {target}"
+
+for visual_guide in (
+    "docs/README.md",
+    "docs/openstack-runbook.md",
+    "docs/operations-guide.md",
+    "docs/terraform-workloads.md",
+    "docs/automation-boundaries.md",
+    "docs/pci-passthrough-vm.md",
+):
+    assert "```mermaid" in Path(visual_guide).read_text(), f"{visual_guide} needs a Mermaid diagram"
+
+for guide_name in ("docs/openstack-runbook.md", "docs/automation-boundaries.md"):
+    guide_text = Path(guide_name).read_text()
+    for command in ("workload-inventory", "workload-configure"):
+        assert command in guide_text, f"{guide_name} omits {command}"
 local_data_text = local_data_doc.read_text()
 for required_path in (
     "inventory/openstack-cluster.local.yml",
