@@ -374,11 +374,14 @@ assert 'mktemp "$platform_cache/management-cluster.XXXXXX"' in platform_services
 
 openstack_script = Path("scripts/openstack.sh").read_text()
 cluster_script = Path("scripts/cluster.sh").read_text()
+verify_cluster_script = Path("scripts/internal/verify-openstack-cluster.sh").read_text()
 prepare_playbook = Path("ansible/playbooks/openstack/prepare-openstack-host.yml").read_text()
 verify_playbook = Path("ansible/playbooks/openstack/verify-openstack-hosts.yml").read_text()
 assert yaml.safe_load(Path("inventory/openstack-plan.yml").read_text())["openstack"]["deployment"] == "fresh-three-node-ceph"
 assert 'inventory="$generated_dir/multinode"' in openstack_script
 assert 'http://$(api_vip):9999' in openstack_script
+assert '"python-masakariclient"' in openstack_script
+assert '"$openstack_bin" segment list' in verify_cluster_script
 assert 'kolla_inventory="$repo_dir/kolla/generated/multinode"' in cluster_script
 for path in (Path("scripts/openstack.sh"), Path("scripts/cluster.sh")):
     assert "all-in-one" not in path.read_text(), f"{path}: all-in-one inventory hardcoding returned"
@@ -489,6 +492,12 @@ assert globals_data["enable_cinder_backend_lvm"] == "no"
 assert globals_data["cinder_backend_ceph"] == "yes"
 assert globals_data["glance_backend_ceph"] == "yes"
 assert globals_data["nova_backend_ceph"] == "yes"
+assert globals_data["enable_masakari"] == "yes"
+assert globals_data["enable_masakari_instancemonitor"] == "yes"
+assert globals_data["enable_masakari_hostmonitor"] == "no"
+masakari_config = Path("kolla/config/masakari.conf").read_text()
+assert "evacuate_all_instances = false" in masakari_config
+assert "process_all_instances = false" in masakari_config
 assert globals_data["cinder_backends"] == []
 assert globals_data["cinder_backend_ceph_name"] == "ceph-rbd"
 assert globals_data["cinder_cluster_name"] == "ceph-rbd"
@@ -497,6 +506,8 @@ assert globals_data["ceph_glance_pool_name"] == "images"
 assert globals_data["ceph_nova_pool_name"] == "vms"
 terraform_main = Path("terraform/openstack/main.tf").read_text()
 terraform_variables = Path("terraform/openstack/variables.tf").read_text()
+assert 'policies = ["soft-anti-affinity"]' in terraform_main
+assert 'HA_Enabled      = "True"' in terraform_main
 assert 'openstack_blockstorage_volume_type_v3" "standard' not in terraform_main
 assert 'openstack_blockstorage_volume_type_v3" "ceph' in terraform_main
 assert 'k8s-01' in terraform_variables and 'k8s-02' in terraform_variables and 'k8s-03' in terraform_variables

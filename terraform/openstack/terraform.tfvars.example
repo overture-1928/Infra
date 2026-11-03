@@ -27,7 +27,8 @@ kubernetes_api_host_number = 10
 
 # Create all three management Kubernetes nodes only after the three physical
 # OpenStack hosts and Ceph are healthy. Every root volume uses the ceph type,
-# and strict anti-affinity places the control-plane VMs on different hosts.
+# and soft anti-affinity normally spreads the control-plane VMs while allowing
+# one to be evacuated onto a surviving host after fencing.
 kubernetes_nodes = {
   k8s-01 = { fixed_ip = "203.0.113.11", floating_ip = "198.51.100.50", volume_size = 120, roles = ["control_plane", "etcd", "worker"], inventory_order = 10 }
   k8s-02 = { fixed_ip = "203.0.113.12", floating_ip = "198.51.100.51", volume_size = 120, roles = ["control_plane", "etcd", "worker"], inventory_order = 20 }

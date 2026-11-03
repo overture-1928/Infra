@@ -33,26 +33,31 @@ flowchart LR
 
 ## 1. 물리 노드 장애와 VM 복구
 
-management Kubernetes control plane VM은 Nova server group의 strict `anti-affinity`를 사용한다.
-정상 상태에서 세 VM이 세 물리 host에 하나씩 배치되는 것은 보장하지만, 물리 host 한 대가
-사라졌을 때 해당 VM을 자동으로 다시 만드는 기능은 아니다.
+management Kubernetes control plane VM은 Nova server group의 `soft-anti-affinity`를 사용한다.
+정상 상태에서 서로 다른 물리 host에 배치하도록 시도하지만 강제하지 않으며, 물리 host 한 대가
+사라졌을 때 해당 VM을 자동으로 다시 만드는 기능도 아니다.
 
-현재 Kolla 설정은 `enable_masakari: "no"`다. Nova compute 장애를 자동 감지해 instance를
-evacuate하는 workflow가 없으며, 세 물리 host에 세 strict anti-affinity VM을 배치한 구조에는
-장애 후 세 번째 VM을 수용할 별도 failure domain도 없다. Ceph root volume이 남아 있어도 VM
-process가 자동으로 다른 host에서 시작되는 것은 아니다.
+현재 Kolla 설정은 Masakari API·Engine과 Instance Monitor를 활성화하지만 Host Monitor는
+비활성화한다. `HA_Enabled=True` VM의 QEMU process 장애는 복구 대상으로 삼을 수 있지만, Nova
+compute host 장애를 감지해 instance를 자동 evacuate하지는 않는다. 물리 host가 실제로 살아 있는
+network partition에서 Ceph RBD를 다른 host에 중복 연결하지 않도록 검증된 fencing 전에는 이
+경계를 유지한다.
+
+Management Kubernetes VM은 `soft-anti-affinity`와 `HA_Enabled=True`를 사용한다. 정상 상태의
+3-host 분산은 확인해야 하며, fencing 이후 Host Monitor를 활성화하면 남은 두 host가 evacuation
+대상이 될 수 있다. Ceph root volume이 남는 것만으로 VM process가 다른 host에서 시작되지는
+않는다.
 
 한 host 장애 시 나머지 두 Kubernetes control plane과 두 etcd member가 정상이면 quorum은
 유지할 수 있다. 이것은 장애 VM이 복구됐다는 뜻은 아니다. 복구 시간을 줄이려면 다음을 함께
 설계하고 실제 장애 시험으로 확인한다.
 
-- 네 번째 이상의 compute host와 장애 시 사용할 CPU/RAM 여유
-- strict anti-affinity를 유지할지, 복구 시 정책을 완화할지에 대한 명시적 결정
-- instance evacuation 또는 Masakari 도입과 fencing 방식
+- 네 번째 이상의 compute host 또는 장애 시 남은 두 host의 충분한 CPU/RAM 여유
+- soft anti-affinity 정상 분산과 장애 후 중복 배치 검증
+- Masakari Host Monitor와 물리 fencing 방식
 - compute 전원 차단, Ceph volume 재연결, Kubernetes/etcd 정상성 검증 절차
 
-초기 3노드에서 단순히 strict anti-affinity를 soft 정책으로 바꾸면 정상 상태에서도 VM이 같은
-host에 모일 수 있으므로 기본 해결책으로 사용하지 않는다.
+구체적인 단계와 완료 기준은 [Masakari VM 복구](../operations/masakari.md)를 따른다.
 
 ## 2. Ceph device class와 실제 디스크
 

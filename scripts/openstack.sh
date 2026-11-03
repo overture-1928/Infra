@@ -71,6 +71,7 @@ setup() {
     "kolla-ansible==$KOLLA_ANSIBLE_VERSION" \
     "python-openstackclient" \
     "python-cinderclient" \
+    "python-masakariclient" \
     "python-magnumclient" \
     "python-octaviaclient"
   deps_marker="$ANSIBLE_COLLECTIONS_PATH/.kolla-deps-$KOLLA_ANSIBLE_VERSION"

@@ -34,9 +34,11 @@ resource "openstack_blockstorage_volume_type_v3" "ceph" {
 }
 
 resource "openstack_compute_servergroup_v2" "kubernetes_control" {
-  count    = var.enable_resources ? 1 : 0
-  name     = "kubernetes-control-plane"
-  policies = ["anti-affinity"]
+  count = var.enable_resources ? 1 : 0
+  name  = "kubernetes-control-plane"
+  # Spread normally, but permit an evacuated control-plane VM to share one of
+  # the two surviving computes after a physical host failure.
+  policies = ["soft-anti-affinity"]
 
   lifecycle {
     prevent_destroy = true
@@ -268,6 +270,7 @@ resource "openstack_compute_instance_v2" "kubernetes" {
   }
 
   metadata = {
+    HA_Enabled      = "True"
     kubespray_roles = join(",", sort(tolist(each.value.roles)))
     inventory_order = tostring(each.value.inventory_order)
   }

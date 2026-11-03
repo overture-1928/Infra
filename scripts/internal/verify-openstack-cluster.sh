@@ -14,6 +14,9 @@ export OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml
 export OS_CLOUD=admin
 
 "$openstack_bin" token issue >/dev/null
+# This exercises the Masakari service endpoint and the client plugin. Host
+# failover segments are intentionally absent until tested fencing is configured.
+"$openstack_bin" segment list >/dev/null
 compute_services_json=$("$openstack_bin" compute service list --service nova-compute -f json)
 actual_compute=$(
   COMPUTE_SERVICES_JSON="$compute_services_json" python3 - "$plan" <<'PY'
@@ -86,4 +89,4 @@ curl --fail --silent --show-error --location --connect-timeout 5 --max-time 15 \
 "$openstack_bin" compute service list
 "$openstack_bin" network agent list
 "$openstack_bin" volume service list
-echo "OpenStack API, $actual_compute topology compute service(s), and Skyline at $skyline_url passed verification."
+echo "OpenStack APIs (including Masakari), $actual_compute topology compute service(s), and Skyline at $skyline_url passed verification."

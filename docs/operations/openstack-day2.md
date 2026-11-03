@@ -101,7 +101,7 @@ Terraform apply를 반복하기 전에 저장된 plan과 해당 server request�
 
 1. project quota와 전체 hypervisor capacity
 2. flavor extra spec과 host aggregate metadata
-3. strict anti-affinity server group의 남은 failure domain
+3. affinity/anti-affinity server group의 남은 failure domain과 정책 충족 여부
 4. image 상태와 boot volume type
 5. Neutron network/subnet/port와 security group
 6. Cinder service, Ceph health와 volume 상태

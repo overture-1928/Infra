@@ -277,6 +277,8 @@ sudo env OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml OS_CLOUD=admin \
 ```
 
 Skyline은 공개 예시 기준 `http://192.0.2.10:9999`다.
+Masakari API·Engine과 Instance Monitor도 이 단계에 배포되며 `verify-openstack`이 Masakari API를
+호출한다. Host Monitor는 물리 fencing을 준비한 뒤 별도로 활성화한다.
 
 ## 9. management Kubernetes 3대
 
@@ -301,8 +303,10 @@ export TERRAFORM_APPLY_CONFIRM=APPLY-KUBERNETES-INFRA
 ./scripts/cluster.sh deploy-kubernetes
 ```
 
-strict anti-affinity 때문에 세 control-plane VM은 서로 다른 compute host에 배치된다.
-이는 정상 상태의 장애 도메인 분리이며, host 장애 시 VM 자동 evacuation을 제공하지 않는다.
+soft anti-affinity는 세 control-plane VM을 가능한 서로 다른 compute host에 배치한다. 생성 후
+실제 배치를 확인해야 하며, 이 정책은 fencing된 host의 VM이 남은 두 compute 중 하나로 이동할
+수 있게 한다. VM에는 `HA_Enabled=True` metadata가 들어가지만 Host Monitor가 비활성화된 초기
+단계에서는 물리 host 장애를 자동 evacuation하지 않는다.
 세부 용량과 복구 제약은 [현재 한계와 운영 전 검토](../architecture/current-limitations.md)를
 따른다.
 

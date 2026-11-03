@@ -9,6 +9,12 @@
 Application credential, kubeconfig와 Terraform 상태의 보관·백업 기준은
 [로컬 전용 설정, 인증정보와 운영 상태](../operations/local-data-and-recovery.md)를 따른다.
 
+Management Kubernetes VM은 `HA_Enabled=True`와 `soft-anti-affinity`로 생성한다. Masakari는 이
+VM의 process 장애를 먼저 복구하고, 물리 host evacuation은 fencing을 갖춘 이후 단계로 남긴다.
+Workload cluster는 CAPI `MachineHealthCheck`도 사용할 수 있으므로 Masakari의 목표 복구 시간을
+먼저 주고 그보다 긴 NotReady timeout에서 CAPI가 Machine을 교체하도록 구성한다. 세부 경계는
+[Masakari VM 복구](../operations/masakari.md)를 따른다.
+
 ## Management Kubernetes 부트스트랩
 
 Management Kubernetes는 CAPO가 만드는 대상이 아니다. Terraform이 OpenStack에 기반 VM과

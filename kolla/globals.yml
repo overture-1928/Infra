@@ -37,7 +37,12 @@ nova_backend_ceph: "yes"
 cinder_backends: []
 
 nova_compute_virt_type: kvm
-enable_masakari: "no"
+# Deploy the Masakari API/engine and recover HA-enabled guest processes. Host
+# evacuation remains disabled until every compute host has tested fencing;
+# evacuating a still-running VM against the same Ceph RBD volume can corrupt it.
+enable_masakari: "yes"
+enable_masakari_instancemonitor: "yes"
+enable_masakari_hostmonitor: "no"
 
 enable_prometheus: "no"
 enable_grafana: "no"

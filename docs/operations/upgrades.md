@@ -64,7 +64,7 @@ sudo ./scripts/cluster.sh verify-openstack
 세 converged host를 동시에 재부팅하지 않는다. 한 host씩 workload 영향을 확인하고 업데이트한다.
 
 1. 대상 host의 VM과 Ceph OSD/MON 역할을 기록한다.
-2. 자동 evacuation이 없으므로 대상 host VM의 중단 허용 여부를 결정한다.
+2. Host Monitor가 비활성화된 초기 구성에서는 자동 evacuation이 없으므로 대상 host VM의 중단 허용 여부를 결정한다.
 3. Ceph와 controller quorum이 나머지 두 host에서 유지될지 확인한다.
 4. package/kernel 변경 후 대상 하나만 재부팅한다.
 5. `verify-hosts`, Ceph `HEALTH_OK`, OpenStack service와 Kubernetes node 복귀를 확인한다.

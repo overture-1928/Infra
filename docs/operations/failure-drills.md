@@ -71,9 +71,10 @@ ssh cloud03 'sudo docker ps --format "{{.Names}}" | grep nova_compute'
 ssh cloud03 'sudo docker stop nova_compute'
 ```
 
-예상 결과는 `cloud03`의 compute service가 `down`이 되고 그 host의 VM 실행 상태가 영향을 받는
-것이다. 현재 Masakari와 자동 evacuation이 비활성화돼 있으므로 VM이 다른 host에서 자동으로
-재기동되는 것을 성공 조건으로 삼지 않는다. API와 다른 두 compute는 계속 동작해야 한다.
+예상 결과는 `cloud03`의 compute service가 `down`이 되는 것이다. Masakari Instance Monitor는
+QEMU/libvirt instance failure를 위한 것이며 nova-compute container 중단을 host fencing으로
+판단하지 않는다. Host Monitor와 자동 evacuation이 비활성화돼 있으므로 VM이 다른 host에서
+자동 재기동되는 것을 성공 조건으로 삼지 않는다. API와 다른 두 compute는 계속 동작해야 한다.
 
 ```bash
 sudo ./scripts/cluster.sh verify-openstack
@@ -99,7 +100,7 @@ ssh cloud03 'sudo systemctl poweroff'
 | --- | --- |
 | Ceph | 해당 OSD `down`, pool은 `size=3/min_size=2`로 I/O 지속, 완전한 HEALTH_OK는 아님 |
 | OpenStack API | 남은 controller의 HAProxy/MariaDB/RabbitMQ로 API 지속 |
-| Nova | 해당 compute `down`; 그 host VM은 자동 복구되지 않음 |
+| Nova | 해당 compute `down`; Host Monitor가 비활성화돼 그 host VM은 자동 복구되지 않음 |
 | management Kubernetes | 남은 control plane/etcd 2개가 건강하면 quorum 유지 |
 | 용량 | 세 번째 복제본을 다른 failure domain에 재생성할 여유 host가 없음 |
 

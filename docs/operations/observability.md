@@ -100,7 +100,7 @@ OSD나 OS 디스크를 추측한 `/dev/sdX`로 자동 순회하지 않는다. to
 
 ## OpenStack 상태 판정
 
-`verify-openstack`은 token 발급, topology compute, hypervisor와 Skyline을 검사한다. 추가 서비스
+`verify-openstack`은 token 발급, Masakari API, topology compute, hypervisor와 Skyline을 검사한다. 추가 서비스
 상태는 admin cloud로 확인한다.
 
 ```bash
@@ -112,6 +112,7 @@ test -r "$OS_CLIENT_CONFIG_FILE"
 .cache/kolla-venv/bin/openstack network agent list
 .cache/kolla-venv/bin/openstack volume service list
 .cache/kolla-venv/bin/openstack endpoint list
+.cache/kolla-venv/bin/openstack segment list
 ```
 
 한 service가 down이면 곧바로 container를 재시작하지 않는다. 먼저 해당 host, Ceph, 시간 동기화,

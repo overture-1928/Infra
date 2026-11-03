@@ -95,7 +95,7 @@ variable "admin_cidr" {
 }
 
 variable "kubernetes_nodes" {
-  description = "Kubernetes nodes and Kubespray roles. Control-plane nodes use strict physical-host anti-affinity."
+  description = "Kubernetes nodes and Kubespray roles. Control-plane nodes use soft physical-host anti-affinity so fenced host evacuation has a valid destination."
   type = map(object({
     fixed_ip        = string
     floating_ip     = string

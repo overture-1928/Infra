@@ -60,8 +60,9 @@ RabbitMQ와 OVN central도 세 컨트롤러에 배치한다. Ceph는 세 호스�
 OpenStack을 처음 배포하기 전에 생성한다.
 
 Ceph의 3중 복제와 OpenStack control plane HA는 compute 장애 VM의 자동 복구를 의미하지 않는다.
-현재 Masakari와 자동 evacuation은 비활성화되어 있으며, 디스크 class·단일 Ceph switch·local
-Terraform state·모니터링의 운영 전 결정 사항은
+Masakari API·Engine과 Instance Monitor는 기본 배포하지만, 물리 host 자동 evacuation은 검증된
+fencing을 추가할 때까지 비활성화한다. 디스크 class·단일 Ceph switch·local Terraform
+state·모니터링의 운영 전 결정 사항은
 [현재 한계와 운영 전 검토](docs/architecture/current-limitations.md)에 정리되어 있다.
 
 ## 디스크 배치
@@ -164,7 +165,8 @@ OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 
 - `prepare-openstack-storage.sh`는 `cloud01`의 1TB Kolla SSD만 초기화한다.
 - Ceph OSD 적용은 세 장치의 by-id, 시리얼, 크기, class와 manifest SHA-256을 확인한다.
 - OpenStack 배포는 세 노드 이상, `storage_backend: ceph`, 내보낸 Ceph client 설정을 요구한다.
-- Terraform은 세 management Kubernetes VM을 한 번에 만들며 모두 Ceph 부팅 볼륨을 사용한다.
+- Masakari는 `HA_Enabled=True` VM의 process 장애를 복구하며 host evacuation은 fencing 전까지 막는다.
+- Terraform은 세 management Kubernetes VM을 한 번에 만들며 Ceph 부팅 볼륨, HA metadata와 soft anti-affinity를 사용한다.
 - 4TB·3TB HDD와 HBA 패스스루 VM은 OpenStack 검증 후 별도 Terraform workload로 만든다.
 - GPU 패스스루 VM도 cloud01 전용 Nova alias, aggregate와 Terraform workload로 분리한다.
 

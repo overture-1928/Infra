@@ -18,6 +18,7 @@
 | [OpenWrt 운영](openwrt.md) | discovery, VLAN plan, rollback guard와 연결 검증 |
 | [Ceph 최초 구축](ceph-initial-deployment.md) | 빈 cluster bootstrap, 최초 OSD, pool과 Kolla client |
 | [OpenStack 일상 운영](openstack-day2.md) | API, quota, scheduler, network와 volume의 읽기 중심 진단 |
+| [Masakari VM 복구](masakari.md) | Instance Monitor 적용 범위와 fencing 이후 Host Monitor 활성화 조건 |
 | [Management Kubernetes 운영](kubernetes-day2.md) | node, PVC, LoadBalancer, cloud integration과 scale 진단 |
 | [관측과 알림](observability.md) | Ceph, OpenStack, host, 디스크와 Kubernetes 상태·경보 기준 |
 

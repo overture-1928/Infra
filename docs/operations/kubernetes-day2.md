@@ -79,9 +79,10 @@ OS_CLOUD=admin .cache/kolla-venv/bin/openstack server show <management-vm-id>
 4. CNI와 node condition
 5. control plane/etcd quorum
 
-Nova 자동 evacuation이 없으므로 물리 host 장애로 VM이 중단되면 Kubernetes가 그 VM 자체를 다른
-host에 만들지 않는다. 남은 두 control plane으로 quorum이 유지되는지 확인하고 물리 host/VM을
-복구한다.
+초기 구성은 Masakari Host Monitor가 비활성화돼 있으므로 물리 host 장애로 VM이 중단되면
+Kubernetes가 그 VM 자체를 다른 host에 만들지 않는다. fencing과 Host Monitor를 추가한 뒤에는
+Masakari가 먼저 VM evacuation을 시도하고 Kubernetes는 복귀한 Node 상태를 확인한다. 초기에는
+남은 두 control plane으로 quorum이 유지되는지 확인하고 물리 host/VM을 복구한다.
 
 node object를 먼저 삭제하거나 새 이름의 VM을 만들지 않는다. Terraform state,
 `state/kubespray/openstack/applied-nodes.json`과 실제 node 이름을 비교한다.

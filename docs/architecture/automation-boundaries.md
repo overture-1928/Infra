@@ -15,6 +15,7 @@
 | 3노드 OpenStack + Ceph 신규 구축 | 적용 코드 구현, 실환경 미검증 | topology 검증, Ceph bootstrap/OSD/pool, Kolla 배포와 서비스 검사 | 실제 세 장비에서 설치·장애·복원 시험 |
 | 네트워크 계획과 복구 guard | 적용 코드 구현, 실환경 미검증 | OpenWrt discovery/plan/apply, 확인 probe, rollback transaction, Netplan 렌더링 | 실제 router·switch·NIC에서 VLAN과 rollback 시험 |
 | Terraform VM + Kubespray | 적용 코드 구현, 실환경 미검증 | 저장된 tfplan으로 management VM 생성, inventory 렌더링, Kubernetes 설치·추가 노드 scale | 실제 OpenStack에서 최초 설치와 노드 장애·복구 시험 |
+| Masakari VM 복구 | Instance Monitor 적용 코드 구현, 실환경 미검증 | API·Engine·Instance Monitor 배포, HA metadata 제한, API 상태 검사 | 물리 fencing, Host Monitor, failover segment와 host evacuation 시험 |
 | Magnum + CAPI/CAPO/ORC | 선택형 적용 코드 구현, 기본 비활성화 | 사전조건 검사, 고정 버전 provider 설치, Magnum/Octavia 배포·재구성·상태 검사 | workload image/template 준비와 cluster 생성·확장·업그레이드·삭제 lifecycle 시험 |
 | K0smotron Hosted Control Plane | manifest 초안 렌더링만 구현 | flag와 사전조건 검사 후 `Cluster`·`K0smotronControlPlane` 초안 생성 | operator 설치, worker manifest, 실제 apply/status/upgrade/delete, etcd PVC와 API 복구 시험 |
 
@@ -97,7 +98,9 @@ guard를 제거하지 말고 별도 증설 workflow를 만든다.
 ## Terraform과 Kubernetes
 
 기본 Terraform root는 세 management Kubernetes VM을 동시에 선언한다. 세 root volume은
-모두 Ceph를 사용하며 control-plane server group은 strict anti-affinity다. tfplan을 새로
+모두 Ceph를 사용하며 control-plane server group은 soft anti-affinity다. 정상 상태에는 서로
+다른 compute 배치를 확인하고, fencing 이후에는 남은 두 host에 evacuation할 수 있다. 각 VM에는
+`HA_Enabled=True` metadata가 들어간다. tfplan을 새로
 만들거나 입력이 바뀌면 이전 확인은 무효다.
 
 애플리케이션 VM은 `terraform/workloads/<stack>`별 독립 state로 관리한다. 공통 module은 root
