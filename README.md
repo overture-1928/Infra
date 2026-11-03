@@ -70,12 +70,17 @@ state·모니터링의 운영 전 결정 사항은
 | 노드 | OS와 Kolla | Ceph | 별도 보존 |
 | --- | --- | --- | --- |
 | `cloud01` | 128GB SSD: Ubuntu, 1TB SSD: `/var/lib/docker` | 2TB NVMe OSD | 4TB·3TB HDD와 여분 512GB SSD |
-| `cloud02` | 512GB SSD: Ubuntu + Docker | 2TB SSD/NVMe OSD | 장비별 여분 디스크 |
-| `cloud03` | 512GB SSD: Ubuntu + Docker | 2TB SSD/NVMe OSD | 장비별 여분 디스크 |
+| `cloud02` | 512GB SATA SSD: Ubuntu + Docker | 2TB NVMe OSD | 장비별 여분 디스크 |
+| `cloud03` | 512GB SATA SSD: Ubuntu + Docker | 2TB NVMe OSD | 장비별 여분 디스크 |
 
 세 개의 2TB OSD는 약 6TB raw이며 3중 복제 후 논리 용량은 약 2TB다. 복구와 재조정 여유를
 고려한 운영 목표는 약 1.4~1.5TB다. Ceph OSD는 OS 디스크와 분리하고 세 노드에 같은 device
 class를 사용한다.
+
+추가 2TB SATA SSD는 최초 구축 필수 장비가 아니며 현재 초기 pool 자동화에도 포함하지 않는다.
+별도 `ssd` Ceph tier가 필요할 때만 세 노드에 같은 등급과 비슷한 용량으로 한 개씩 추가하고,
+NVMe pool과 분리된 CRUSH rule, pool과 Cinder volume type을 구성한다. 장치만 추가한 상태에서
+NVMe용 `osd-apply`를 다시 실행하지 않는다.
 
 `cloud01`의 4TB·3TB HDD는 Ceph에 넣지 않는다. 3노드 OpenStack 검증이 끝난 뒤 HDD 전용
 SATA HBA를 `cloud01` 고정 스토리지 VM에 PCI 패스스루한다. 자세한 내용은
