@@ -70,6 +70,9 @@ sudo ./scripts/cluster.sh verify-openstack
 | HBA/HDD VM 생성 | cloud01 전용 workload | 조건부 지원 |
 | GPU VM 생성 | cloud01 전용 PCI workload | 조건부 지원 |
 
+물리 host 장애, 혼합 OSD class, 단일 Ceph switch, local state와 모니터링의 현재 보장 범위는
+[현재 한계와 운영 전 검토](../architecture/current-limitations.md)를 먼저 확인한다.
+
 장애가 발생한 구성요소에 따라 변경 가능한 범위도 달라진다.
 
 ```mermaid

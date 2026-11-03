@@ -302,6 +302,9 @@ export TERRAFORM_APPLY_CONFIRM=APPLY-KUBERNETES-INFRA
 ```
 
 strict anti-affinity 때문에 세 control-plane VM은 서로 다른 compute host에 배치된다.
+이는 정상 상태의 장애 도메인 분리이며, host 장애 시 VM 자동 evacuation을 제공하지 않는다.
+세부 용량과 복구 제약은 [현재 한계와 운영 전 검토](../architecture/current-limitations.md)를
+따른다.
 
 ## 10. 일반 workload VM과 서비스 구성
 

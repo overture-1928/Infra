@@ -265,6 +265,7 @@ for source in markdown_sources:
 
 for visual_guide in (
     "docs/README.md",
+    "docs/architecture/current-limitations.md",
     "docs/getting-started/installation.md",
     "docs/operations/scenarios.md",
     "docs/workloads/terraform.md",

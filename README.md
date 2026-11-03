@@ -59,6 +59,11 @@ OpenStack API와 Skyline은 `cloud01`~`cloud03`의 HAProxy/Keepalived VIP를 사
 RabbitMQ와 OVN central도 세 컨트롤러에 배치한다. Ceph는 세 호스트를 장애 도메인으로 사용하며,
 OpenStack을 처음 배포하기 전에 생성한다.
 
+Ceph의 3중 복제와 OpenStack control plane HA는 compute 장애 VM의 자동 복구를 의미하지 않는다.
+현재 Masakari와 자동 evacuation은 비활성화되어 있으며, 디스크 class·단일 Ceph switch·local
+Terraform state·모니터링의 운영 전 결정 사항은
+[현재 한계와 운영 전 검토](docs/architecture/current-limitations.md)에 정리되어 있다.
+
 ## 디스크 배치
 
 | 노드 | OS와 Kolla | Ceph | 별도 보존 |
