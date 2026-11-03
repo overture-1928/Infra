@@ -7,13 +7,18 @@
 Ceph OSD 용도로 추가하는 배치를 권장한다. OpenStack 위의 Kubernetes 인프라는
 Terraform으로 만들고 Kubespray로 설치한다.
 
-```text
-Ubuntu Server 설치
-  -> Ansible 호스트 준비
-  -> Ansible OpenWrt Provider VLAN 준비
-  -> Kolla-Ansible OpenStack
-  -> Terraform OpenStack 자원과 Kubernetes VM
-  -> Kubespray Kubernetes
+```mermaid
+flowchart TD
+  A["장비 확인과 로컬 설정 작성"] --> B["Ubuntu Autoinstall seed 생성"]
+  B --> C["cloud01에 Ubuntu Server 24.04 설치"]
+  C --> D["저장소 clone과 로컬 설정 복원"]
+  D --> E["Ansible로 Ubuntu 호스트 준비"]
+  E --> F["Ansible로 OpenWrt Provider VLAN 준비"]
+  F --> S["스토리지 dry-run과 확인값으로<br/>데이터 SSD · NVMe 준비"]
+  S --> G["Kolla-Ansible로 OpenStack과 Skyline 배포"]
+  G --> H["Terraform으로 OpenStack 자원과 Kubernetes VM 생성"]
+  H --> I["Kubespray로 management/hosting Kubernetes 설치"]
+  I -.->|"3노드·Ceph·복구 검증 후"| J["Magnum과 CAPI/CAPO 플랫폼 활성화"]
 ```
 
 현재 저장소의 기본 토폴로지는 `cloud01`만 활성화되어 있다. 실제 장비에는 적용하지 않았으며,
@@ -81,13 +86,22 @@ Ubuntu 자동 설치는 공개키 전용 SSH와 함께 이 작업에 필요한
 
 ## 단일 노드 구성
 
-```text
-cloud01
-├─ control / network / compute / monitoring / storage
-├─ OpenStack API VIP 192.0.2.10
-├─ Cinder LVM fast + standard
-└─ OpenStack VM k8s-01
-   └─ 단일 노드 Kubernetes
+```mermaid
+flowchart TB
+  ADMIN["관리자 PC"] --> VIP["OpenStack API VIP 192.0.2.10<br/>Skyline :9999"]
+
+  subgraph CLOUD01["물리 서버 cloud01"]
+    KOLLA["Kolla OpenStack<br/>control · network · compute · monitoring"]
+    LVM["Cinder LVM<br/>fast · standard"]
+    VM["OpenStack VM k8s-01"]
+    K8S["단일 노드 management/hosting Kubernetes"]
+
+    KOLLA --> VM
+    LVM --> VM
+    VM --> K8S
+  end
+
+  VIP --> KOLLA
 ```
 
 한 물리 서버에서 모든 서비스가 실행되므로 호스트 장애를 견디지 못한다. OpenStack API VIP와

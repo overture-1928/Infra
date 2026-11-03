@@ -6,6 +6,26 @@
 파일과 비밀·상태의 백업 기준은 [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를
 먼저 확인한다.
 
+```mermaid
+flowchart TD
+  A["1. 장비와 디스크 시리얼 확인"] --> B["로컬 인벤토리 작성"]
+  B --> C["2. 작업 PC에서 Autoinstall seed 생성"]
+  C --> D{"로컬 설정·seed·SSH 키<br/>외부 백업과 복원 확인"}
+  D --> E{"설치 화면에서<br/>OS SSD 시리얼 재확인"}
+  E --> F["Ubuntu Server 24.04 설치"]
+  F --> G["cloud01에서 저장소 clone<br/>로컬 설정과 SSH 키 복원"]
+  G --> H["3. validate · setup · render"]
+  H --> I["4. prepare-hosts · 재부팅"]
+  I --> J["5. OpenWrt plan · 확인값 · apply"]
+  J --> K{"6. 스토리지 dry-run과<br/>디스크 시리얼 재확인"}
+  K --> L["확인값으로 데이터 SSD와 NVMe 초기화"]
+  L --> M["verify-hosts"]
+  M --> N["7. Kolla-Ansible OpenStack 배포"]
+  N --> O["8. Terraform plan · 확인값 · apply"]
+  O --> P["9. Kubespray management/hosting Kubernetes"]
+  P -.->|"3노드·Ceph·복구 검증 후"| Q["10. Magnum/CAPI 플랫폼"]
+```
+
 ## 1. cloud01 하드웨어 확인
 
 현재 장비에서 디스크 모델, 시리얼, SMART 상태를 실제 라벨과 대조한다.
@@ -215,6 +235,22 @@ export OPENWRT_CONFIRM='CONFIRM-OPENWRT:<plan이 출력한 실제 값>'
 
 장비별 값, 관리형 스위치 설정과 복구 절차는 [OpenWrt Provider VLAN 자동화](openwrt-router.md)를
 따른다. 이 단계는 `br-ex`가 생기기 전인 지금 실행해야 한다.
+
+```mermaid
+flowchart LR
+  ADMIN["관리자 PC"] --> MGMT["관리망 192.0.2.0/24<br/>native/untagged"]
+  MGMT --> HOST["cloud01 mgmt0<br/>192.0.2.2"]
+  MGMT --> API["OpenStack API VIP 192.0.2.10<br/>Skyline :9999"]
+
+  ROUTER["OpenWrt<br/>관리 192.0.2.1 · Provider 198.51.100.1"] --> MGMT
+  ROUTER --> TRUNK["관리형 스위치 trunk<br/>VLAN 10 tagged"]
+  TRUNK --> EXTIF["cloud01 mgmt0.10<br/>호스트 IP 없음"]
+  EXTIF --> BREX["Kolla br-ex<br/>flat / physnet1"]
+  BREX --> EXTERNAL["Neutron provider 망<br/>198.51.100.0/24"]
+  EXTERNAL --> NROUTER["Neutron router<br/>provider 주소 198.51.100.2"]
+  NROUTER --> TENANT["OVN tenant 논리망<br/>203.0.113.0/24"]
+  TENANT --> K8SVM["k8s-01 고정 IP 203.0.113.11<br/>Floating IP 198.51.100.50<br/>kube-vip API 203.0.113.10"]
+```
 
 ## 6. cloud01 OpenStack 스토리지 준비
 

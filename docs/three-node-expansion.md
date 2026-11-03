@@ -27,6 +27,23 @@ controller 3대를 유지한 4·6·8노드 구성도 같은 방식으로 렌더�
 | 5노드 | `cloud01`∼`cloud03` | 기존 역할은 유지하고 `cloud04`∼`cloud05` 추가 | 선택한 3개 이상 호스트에 Ceph OSD |
 | 7노드 | `cloud01`∼`cloud03` | 기존 역할은 유지하고 `cloud04`∼`cloud07` 추가 | 선택한 3개 이상 호스트에 Ceph OSD |
 
+권장 역할 배치는 다음 그림처럼 확장된다. `cloud04` 이후를 추가해도 기존 세
+controller의 정족수와 network 역할은 그대로 유지한다.
+
+```mermaid
+flowchart LR
+    N3["3노드<br/>cloud01-03: control + network + compute<br/>LVM storage: cloud01만"]
+    N5["5노드<br/>cloud01-03: 기존 역할 유지<br/>cloud04-05: compute"]
+    N7["7노드<br/>cloud01-03: 기존 역할 유지<br/>cloud04-07: compute"]
+    CEPH["Ceph를 사용할 때<br/>선택한 3개 이상 호스트에 OSD<br/>LVM storage 역할은 추가하지 않음"]
+
+    N3 -->|cloud04-05 편입| N5
+    N5 -->|cloud06-07 편입| N7
+    CEPH -.-> N3
+    CEPH -.-> N5
+    CEPH -.-> N7
+```
+
 controller를 5대나 7대로 늘리는 구성도 검증은 통과하지만, 제어부의 DB·메시지
 큐·API 배치가 함께 커진다. 해당 장애 도메인과 용량이 필요하다는 근거가 있을 때
 별도로 검토한다. network 역할은 전체가 3노드 이상이면 최소 3대에 있어야 한다.

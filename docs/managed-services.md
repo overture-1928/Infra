@@ -7,6 +7,57 @@
 Application credential, kubeconfig와 Terraform 상태의 보관·백업 기준은
 [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를 따른다.
 
+## 전체 계층과 요청 흐름
+
+```mermaid
+flowchart TB
+    user["사용자 · 운영자"]
+    bootstrap["Terraform + Kubespray<br/>management cluster 구성"]
+
+    subgraph openstack["OpenStack 기반 계층"]
+        portal["Skyline · OpenStack API"]
+        magnum["Magnum API<br/>magnum-capi driver"]
+        iaas["Nova · Neutron · Cinder · Glance<br/>Octavia · Barbican · Ceph"]
+    end
+
+    subgraph management["Management Kubernetes · OpenStack VM 3대"]
+        mgmtvms["control-plane VM 3대"]
+        endpoint["HA API endpoint<br/>cluster.api_vip:6443"]
+        controllers["CAPI core · kubeadm providers<br/>CAPO · ORC controllers"]
+    end
+
+    subgraph workload["OpenStack tenant의 관리형 Kubernetes"]
+        resources["VM · network · volume<br/>load balancer"]
+        cluster["workload control plane<br/>worker nodes"]
+    end
+
+    hostedplan["hosted-plan<br/>로컬 renderer"]
+    hosted["K0smotron YAML 초안<br/>설치·적용은 아직 하지 않음"]
+
+    user --> portal
+    user -->|"cluster 생성·확장·삭제 요청"| magnum
+    portal --> iaas
+    iaas -->|"management VM · network · volume"| mgmtvms
+    bootstrap -->|"VM 설정 · Kubernetes 설치"| mgmtvms
+    mgmtvms --> endpoint
+
+    magnum -->|"ServiceAccount kubeconfig"| endpoint
+    endpoint -->|"Cluster API 리소스"| controllers
+    controllers -->|"OpenStack API 호출"| iaas
+    iaas --> resources
+    controllers -->|"원하는 cluster 상태로 조정"| cluster
+    resources --> cluster
+
+    hostedplan -.->|"hosted_control_plane=true일 때 render"| hosted
+    hosted -.->|"향후 management cluster에 적용할 설계"| controllers
+```
+
+Management Kubernetes는 Terraform과 Kubespray로 먼저 만드는 운영 기반이며 CAPO가 자기 자신을
+만드는 구조가 아니다. 이후 Magnum API가 받은 cluster 요청을 `magnum-capi` driver가 management
+Kubernetes의 Cluster API 리소스로 전달한다. CAPI, kubeadm provider, CAPO와 ORC controller는
+그 리소스를 보고 OpenStack API를 호출해 workload cluster용 VM, 네트워크, 볼륨과 load
+balancer를 만든다. 그림의 점선 `hosted-plan` 경로는 검토용 manifest 생성까지만 구현되어 있다.
+
 ## 3노드 이후 활성화 순서
 
 기존 LVM 데이터를 Ceph로 옮기고 복구 시험까지 끝낸 뒤 로컬 topology에서 다음 값만 먼저

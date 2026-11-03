@@ -10,6 +10,31 @@ Ceph OSD를 적용하면 선택한 빈 디스크가 BlueStore 장치로 사용�
 Ceph 전용 로컬 topology, keyring과 클러스터 복구 상태의 보관 기준은
 [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를 따른다.
 
+기존 LVM 클라우드를 전환하는 전체 흐름은 다음과 같다. `ceph-cluster.sh`의 자동화
+범위는 Kolla client 설정을 내보내는 단계까지다. hybrid Kolla 설정, 기존 데이터
+이전과 최종 LVM 비활성화는 각각 검토한 유지보수 작업으로 수행한다.
+
+```mermaid
+flowchart TB
+    LVM["운영 중인 LVM OpenStack<br/>기존 backend 유지"]
+    PLAN["별도 Ceph topology<br/>validate + preflight"]
+    BOOT["cephadm bootstrap + host 등록<br/>각 단계 확인 문자열 필요"]
+    OSD["OSD dry-run + 최초 적용<br/>manifest SHA-256 확인"]
+    EXPORT["RBD pool 구성<br/>Kolla client 설정 export"]
+    HYBRID["hybrid Kolla 설정<br/>LVM 유지 + Ceph 추가<br/>별도 검토 작업"]
+    TEST["새 Ceph 볼륨과 이미지<br/>생성 + 연결 + 복원 시험"]
+    MOVE["기존 Cinder와 Glance 데이터<br/>백업하며 수동 이전"]
+    GATE{"로컬 볼륨과 snapshot 0개<br/>복원과 노드 장애 시험 성공?"}
+    KEEP["LVM backend 유지<br/>문제 해결 후 다시 검증"]
+    OFF["LVM과 iSCSI 비활성화<br/>별도 유지보수 작업"]
+
+    LVM --> PLAN --> BOOT --> OSD --> EXPORT
+    EXPORT --> HYBRID --> TEST --> MOVE --> GATE
+    GATE -->|아니요| KEEP
+    KEEP --> TEST
+    GATE -->|예| OFF
+```
+
 ## 기존 LVM 클라우드와 topology 분리
 
 현재 LVM OpenStack을 운영 중이면 기본
@@ -131,6 +156,18 @@ sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG \
 preflight 전에 중단한다. 운영 중인 Ceph에 새 호스트나 OSD만 추가하는 증설 workflow는 아직
 구현되지 않았으므로 이 명령을 반복 실행하지 않는다. 기존 OSD를 지워서 guard를 우회하지 말고
 별도로 검토한 cephadm 증설 절차를 사용해야 한다.
+
+```mermaid
+flowchart LR
+    EMPTY{"기존 OSD 수"}
+    FIRST["0개<br/>osd-plan 후 osd-apply 가능"]
+    BLOCK["1개 이상<br/>자동화가 적용 전에 중단"]
+    REVIEW["호스트 또는 OSD 증설<br/>별도로 검토한 cephadm 절차"]
+
+    EMPTY -->|0| FIRST
+    EMPTY -->|1 이상| BLOCK
+    BLOCK --> REVIEW
+```
 
 `osd-plan`은 장치 preflight를 다시 수행한 직후 cephadm dry-run을 실행한다. 출력의 호스트와
 장치 경로가 topology와 정확히 일치하는지 확인한다.

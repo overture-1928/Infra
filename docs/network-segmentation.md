@@ -21,6 +21,59 @@ Ceph를 도입할 때 저장 트래픽을 별도 NIC 또는 bond로 옮긴다.
 `203.0.113.0/24`는 물리 스위치에 만드는 VLAN이 아니다. OVN이 물리 underlay 위에 만드는
 프로젝트 논리망이다.
 
+## 트래픽 흐름 한눈에 보기
+
+```mermaid
+flowchart LR
+    admin["관리자 PC<br/>관리 LAN · VPN · bastion"]
+    internet["외부망 / 인터넷"]
+    router["OpenWrt 또는 방화벽<br/>관리 gateway · Provider gateway"]
+    switch["관리형 스위치<br/>native + tagged trunk"]
+
+    subgraph host["OpenStack 호스트"]
+        mgmt["mgmt0<br/>native 관리망"]
+        api["SSH · OpenStack API<br/>VIP · Skyline"]
+        provider["mgmt0.10 → br-ex<br/>flat / physnet1"]
+        tunnel["tunnel interface<br/>현재 mgmt0 · 향후 VLAN 20"]
+        ovn["OVN 논리 스위치 · 라우터"]
+        storage["향후 storage NIC/bond<br/>VLAN 30"]
+    end
+
+    subgraph tenant["Tenant 논리망 203.0.113.0/24"]
+        vm1["VM / Kubernetes node"]
+        vm2["다른 호스트의 VM"]
+    end
+
+    ceph["3노드 이상에서 Ceph<br/>MON · OSD"]
+
+    admin -->|"관리망 192.0.2.0/24"| router
+    router -->|"native/untagged"| switch
+    switch --> mgmt
+    mgmt --> api
+    mgmt <-->|"현재 tunnel underlay"| tunnel
+
+    internet <--> router
+    router <-->|"VLAN 10 · 198.51.100.0/24"| switch
+    switch <-->|"tagged VLAN 10"| provider
+    provider <-->|"Floating IP / north-south"| ovn
+
+    switch -.->|"향후 tagged VLAN 20"| tunnel
+    tunnel <-->|"Geneve UDP 6081"| ovn
+    ovn <--> vm1
+    ovn <--> vm2
+    vm1 <-->|"east-west 논리 통신"| vm2
+
+    switch -.->|"VLAN 30 · 별도 경로 권장"| storage
+    storage -.->|"block · image · VM disk"| ceph
+```
+
+실선은 현재 한 노드에서도 쓰는 경로다. 점선은 3노드 전환 때 검토하는 전용 tunnel VLAN과
+Ceph 저장 경로다.
+외부에서 VM으로 들어오는 패킷은 `VLAN 10 → mgmt0.10 → br-ex → OVN router → tenant VM`
+순서로 흐른다. 반대로 VM의 외부 통신과 Floating IP 응답도 같은 경로를 역방향으로 지난다.
+Tenant VM끼리의 논리 통신은 OVN이 처리하며, 서로 다른 물리 호스트에 있으면 tunnel
+interface의 Geneve 패킷으로 캡슐화된다.
+
 한 노드에서는 Ceph가 꺼져 있으므로 별도 저장망이 필요 없다. 이 구성은 VLAN 10을 처리할
 관리형 스위치와 `198.51.100.1` 게이트웨이·라우팅을 제공할 라우터 또는 방화벽이 있어야
 동작한다. 일반 스위치만 연결하고 `mgmt0.10`을 만들면 외부 게이트웨이에 도달할 수 없다.
