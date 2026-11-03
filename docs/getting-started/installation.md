@@ -124,7 +124,7 @@ sudo visudo -cf /etc/sudoers.d/90-operator-ansible
 
 ```bash
 cd /home/operator
-git clone https://github.com/overture-1928/Infra.git Openstack
+git clone https://github.com/overture-1928/Infra-OpenStack.git Openstack
 cd Openstack
 ```
 
