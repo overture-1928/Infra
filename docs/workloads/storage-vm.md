@@ -1,5 +1,7 @@
 # cloud01 고정 스토리지 VM
 
+> 문서 위치: [전체 문서](../README.md) · [OpenStack workload](README.md)
+
 4TB와 3TB HDD는 Ceph OSD로 사용하지 않는다. 3노드 Ceph/OpenStack과 management Kubernetes
 검증이 끝난 뒤, 두 HDD만 연결된 전용 SATA HBA를 `cloud01`의 스토리지 VM 한 대에 PCI
 패스스루한다.

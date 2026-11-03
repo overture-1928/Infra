@@ -1,8 +1,10 @@
 # 상황별 운영 가이드
 
+> 문서 위치: [전체 문서](../README.md) · [운영과 복구](README.md)
+
 이 문서는 최초 구축 이후 자주 생기는 상황에서 어느 명령과 기준 문서를 사용해야 하는지
 찾기 위한 안내서다. 설치를 처음 시작할 때는 이 문서의 일부만 골라 실행하지 말고
-[전체 설치 런북](openstack-runbook.md)을 순서대로 따른다.
+[전체 설치 런북](../getting-started/installation.md)을 순서대로 따른다.
 
 ```mermaid
 flowchart TD
@@ -43,11 +45,11 @@ sudo ./scripts/cluster.sh verify-openstack
 
 | 확인 결과 | 현재 지점 | 다음 기준 |
 | --- | --- | --- |
-| `validate` 실패 | 로컬 topology 입력 전 | [로컬 설정·비밀·상태](local-secrets-and-state.md) |
-| `verify-hosts` 실패 | Ubuntu·네트워크 준비 중 | [설치 런북 4~6단계](openstack-runbook.md#4-도구와-세-호스트-준비) |
-| Ceph config가 없고 디스크 preflight 성공 | Ceph bootstrap 전 | [Ceph 최초 구축](ceph-transition.md) |
-| Ceph는 정상이고 OpenStack API가 없음 | Kolla 배포 전 | [설치 런북 8단계](openstack-runbook.md#8-3노드-openstack-배포) |
-| OpenStack은 정상이고 management VM이 없음 | Terraform 적용 전 | [설치 런북 9단계](openstack-runbook.md#9-management-kubernetes-3대) |
+| `validate` 실패 | 로컬 topology 입력 전 | [로컬 설정·비밀·상태](local-data-and-recovery.md) |
+| `verify-hosts` 실패 | Ubuntu·네트워크 준비 중 | [설치 런북 4~6단계](../getting-started/installation.md#4-도구와-세-호스트-준비) |
+| Ceph config가 없고 디스크 preflight 성공 | Ceph bootstrap 전 | [Ceph 최초 구축](ceph-initial-deployment.md) |
+| Ceph는 정상이고 OpenStack API가 없음 | Kolla 배포 전 | [설치 런북 8단계](../getting-started/installation.md#8-3노드-openstack-배포) |
+| OpenStack은 정상이고 management VM이 없음 | Terraform 적용 전 | [설치 런북 9단계](../getting-started/installation.md#9-management-kubernetes-3대) |
 | VM은 있고 Kubernetes kubeconfig가 없음 | Kubespray 적용 전 | `cluster.sh deploy-kubernetes` |
 
 ## 상황 선택
@@ -182,7 +184,7 @@ export TERRAFORM_WORKLOAD_APPLY_CONFIRM='APPLY-TERRAFORM-WORKLOAD:web:<plan-sha2
 ./scripts/cluster.sh workload-output web
 ```
 
-자세한 입력 규칙은 [서비스별 Terraform workload](terraform-workloads.md)를 따른다.
+자세한 입력 규칙은 [서비스별 Terraform workload](../workloads/terraform.md)를 따른다.
 
 ## 기존 workload에 VM을 추가하거나 사양을 바꾸는 경우
 
@@ -245,7 +247,7 @@ sudo --preserve-env=OPENSTACK_EXPAND_CONFIRM ./scripts/cluster.sh expand-opensta
 ```
 
 정확한 topology 편집, OpenWrt 반영과 사후 검사는
-[3노드 이후 확장](three-node-expansion.md)을 따른다. 추가 노드의 디스크를 topology에 적는 것만으로
+[3노드 이후 확장](cluster-expansion.md)을 따른다. 추가 노드의 디스크를 topology에 적는 것만으로
 운영 Ceph OSD가 늘어나지는 않는다.
 
 ## management Kubernetes 노드를 추가하는 경우
@@ -276,7 +278,7 @@ sudo ./scripts/openstack.sh check
 ```
 
 이 VM은 cloud01 고정이며 HA와 live migration 대상이 아니다. 실제 PCI alias, host aggregate와
-전용 flavor 구성은 [고정 스토리지 VM](storage-vm.md)을 따른다.
+전용 flavor 구성은 [고정 스토리지 VM](../workloads/storage-vm.md)을 따른다.
 
 ## cloud01에 GPU 전용 VM을 만드는 경우
 
@@ -294,7 +296,7 @@ flowchart LR
 ```
 
 전체 GPU 한 장을 한 VM에 주는 구성이며 vGPU나 공유 GPU 구성이 아니다. VM은 live migration과
-HA 대상이 아니다. 구체적인 설정과 검증 순서는 [PCI 패스스루 VM](pci-passthrough-vm.md)을
+HA 대상이 아니다. 구체적인 설정과 검증 순서는 [PCI 패스스루 VM](../workloads/pci-passthrough.md)을
 따른다.
 
 ## Git 변경을 가져오거나 운영 PC를 교체한 경우
@@ -313,7 +315,7 @@ make check
 ```
 
 `kolla/generated/passwords.yml`, Terraform state, `/etc/kolla`, `/etc/ceph`, kubeconfig와 Kubespray
-적용 상태가 복구 기준이다. 전체 목록은 [로컬 설정·비밀·상태](local-secrets-and-state.md)에 있다.
+적용 상태가 복구 기준이다. 전체 목록은 [로컬 설정·비밀·상태](local-data-and-recovery.md)에 있다.
 
 ## 아직 자동화하지 않은 작업
 
@@ -327,4 +329,4 @@ make check
 - HBA passthrough VM의 다른 compute 이동
 - Magnum/CAPI 활성화 후 물리 OpenStack host 확장
 
-이 경계는 [자동화 범위와 승인 지점](automation-boundaries.md)에 함께 정리되어 있다.
+이 경계는 [자동화 범위와 승인 지점](../architecture/automation-boundaries.md)에 함께 정리되어 있다.

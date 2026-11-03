@@ -1,5 +1,7 @@
 # Ceph 최초 구축과 안전 경계
 
+> 문서 위치: [전체 문서](../README.md) · [운영과 복구](README.md)
+
 이 저장소는 기존 LVM OpenStack을 Ceph로 이전하지 않는다. 세 물리 노드와 세 OSD를 먼저
 준비하고 **빈 Ceph 클러스터를 만든 뒤** OpenStack을 처음 배포한다.
 

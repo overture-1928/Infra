@@ -216,24 +216,40 @@ for root in public_roots:
         unexpected = sorted(set(home_users) - {"operator"})
         assert not unexpected, f"{path}: public source contains local home paths for {unexpected}"
 
-local_data_doc = Path("docs/local-secrets-and-state.md")
+local_data_doc = Path("docs/operations/local-data-and-recovery.md")
 assert local_data_doc.is_file(), "the local secrets and state guide is missing"
 readme = Path("README.md").read_text()
-assert "docs/local-secrets-and-state.md" in readme, "README does not link the local data guide"
+assert "docs/operations/local-data-and-recovery.md" in readme, "README does not link the local data guide"
 docs_index_path = Path("docs/README.md")
 assert docs_index_path.is_file(), "the documentation index is missing"
 docs_index = docs_index_path.read_text()
-for guide in sorted(Path("docs").glob("*.md")):
-    if guide == docs_index_path:
-        continue
-    assert f"({guide.name})" in docs_index, f"documentation index omits {guide.name}"
+documentation_sections = (
+    "getting-started",
+    "architecture",
+    "operations",
+    "workloads",
+    "platform",
+)
+root_markdown = sorted(Path("docs").glob("*.md"))
+assert root_markdown == [docs_index_path], "docs root must contain only the main README"
+for section_name in documentation_sections:
+    section = Path("docs") / section_name
+    section_index = section / "README.md"
+    assert section_index.is_file(), f"documentation section index is missing: {section_index}"
+    assert f"({section_name}/README.md)" in docs_index, f"documentation index omits {section_name}"
+    section_text = section_index.read_text()
+    for guide in sorted(section.glob("*.md")):
+        if guide == section_index:
+            continue
+        assert f"({guide.name})" in section_text, f"{section_index} omits {guide.name}"
 
 markdown_sources = [
     Path("README.md"),
     Path("scripts/README.md"),
     Path("terraform/README.md"),
     Path("ansible/playbooks/README.md"),
-    *sorted(Path("docs").glob("*.md")),
+    Path("terraform/workloads/_template/README.md"),
+    *sorted(Path("docs").rglob("*.md")),
 ]
 for source in markdown_sources:
     assert source.is_file(), f"missing Markdown source: {source}"
@@ -249,15 +265,18 @@ for source in markdown_sources:
 
 for visual_guide in (
     "docs/README.md",
-    "docs/openstack-runbook.md",
-    "docs/operations-guide.md",
-    "docs/terraform-workloads.md",
-    "docs/automation-boundaries.md",
-    "docs/pci-passthrough-vm.md",
+    "docs/getting-started/installation.md",
+    "docs/operations/scenarios.md",
+    "docs/workloads/terraform.md",
+    "docs/architecture/automation-boundaries.md",
+    "docs/workloads/pci-passthrough.md",
 ):
     assert "```mermaid" in Path(visual_guide).read_text(), f"{visual_guide} needs a Mermaid diagram"
 
-for guide_name in ("docs/openstack-runbook.md", "docs/automation-boundaries.md"):
+for guide_name in (
+    "docs/getting-started/installation.md",
+    "docs/architecture/automation-boundaries.md",
+):
     guide_text = Path(guide_name).read_text()
     for command in ("workload-inventory", "workload-configure"):
         assert command in guide_text, f"{guide_name} omits {command}"
@@ -475,7 +494,7 @@ assert initial_osd_guard.index("require_cluster") < initial_osd_guard.index("cep
 assert "existing_osd_count == 0" in initial_osd_guard
 osd_dry_run = ceph_script.split("osd_dry_run() {", 1)[1].split("\n}", 1)[0]
 assert osd_dry_run.index("require_initial_osd_deployment") < osd_dry_run.index("preflight_devices")
-ceph_transition = Path("docs/ceph-transition.md").read_text()
+ceph_transition = Path("docs/operations/ceph-initial-deployment.md").read_text()
 assert "최초 OSD 배포 전용" in ceph_transition
 assert "ceph osd ls --format json" in ceph_transition
 terraform_main = Path("terraform/openstack/main.tf").read_text()
@@ -525,7 +544,7 @@ for command in ("workload-plan", "workload-apply", "workload-inventory", "worklo
 inventory_renderer = Path("scripts/internal/render-workload-ansible-inventory.py")
 assert inventory_renderer.exists() and inventory_renderer.stat().st_mode & 0o111
 assert Path("ansible/inventory/workloads/settings.example.yml").is_file()
-assert "docs/terraform-workloads.md" in Path("README.md").read_text()
+assert "docs/workloads/terraform.md" in Path("README.md").read_text()
 PY
 
 # Validate the checked-in fresh three-node topology without writing generated files.

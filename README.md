@@ -8,7 +8,7 @@ OpenStack, management Kubernetes를 새로 설치하는 자동화다. 단일 노
 `inventory/*.local.yml`에 실제 값을 넣기 전에는 설치를 시작하면 안 된다.
 
 처음 읽는 순서와 작업별 기준 문서는 [문서 안내](docs/README.md)에 정리되어 있다.
-구축 중단, 장애와 변경·확장 상황은 [상황별 운영 가이드](docs/operations-guide.md)에서 찾는다.
+구축 중단, 장애와 변경·확장 상황은 [상황별 운영 가이드](docs/operations/scenarios.md)에서 찾는다.
 
 ## 최종 구조
 
@@ -73,7 +73,7 @@ class를 사용한다.
 
 `cloud01`의 4TB·3TB HDD는 Ceph에 넣지 않는다. 3노드 OpenStack 검증이 끝난 뒤 HDD 전용
 SATA HBA를 `cloud01` 고정 스토리지 VM에 PCI 패스스루한다. 자세한 내용은
-[cloud01 고정 스토리지 VM](docs/storage-vm.md)을 따른다.
+[cloud01 고정 스토리지 VM](docs/workloads/storage-vm.md)을 따른다.
 
 ## 네트워크
 
@@ -85,7 +85,7 @@ SATA HBA를 `cloud01` 고정 스토리지 VM에 PCI 패스스루한다. 자세�
 | Kubernetes tenant | `203.0.113.0/24` | management Kubernetes VM |
 
 Ceph망에는 gateway를 두지 않는다. `ceph0`의 실제 MAC과 주소는 각 노드의 로컬 topology에
-기록하며 Ansible이 Netplan을 생성한다. 자세한 연결은 [망분리 설계](docs/network-segmentation.md)에
+기록하며 Ansible이 Netplan을 생성한다. 자세한 연결은 [망분리 설계](docs/architecture/networking.md)에
 정리되어 있다.
 
 ## 설치 순서
@@ -136,8 +136,8 @@ sudo ./scripts/cluster.sh verify-openstack
 ```
 
 각 파괴적 단계의 정확한 확인 문자열과 검증 명령은
-[설치 런북](docs/openstack-runbook.md)에 있다. Ceph 초기 구축은
-[Ceph 초기 구축](docs/ceph-transition.md)을 따른다.
+[설치 런북](docs/getting-started/installation.md)에 있다. Ceph 초기 구축은
+[Ceph 초기 구축](docs/operations/ceph-initial-deployment.md)을 따른다.
 
 OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 Ansible inventory를
 생성해 guest를 구성한다.
@@ -151,7 +151,7 @@ OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 
 ```
 
 상세 입력과 안전 절차는
-[서비스별 Terraform workload](docs/terraform-workloads.md)를 따른다.
+[서비스별 Terraform workload](docs/workloads/terraform.md)를 따른다.
 
 ## 자동화 경계
 
@@ -163,12 +163,13 @@ OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 
 - 4TB·3TB HDD와 HBA 패스스루 VM은 OpenStack 검증 후 별도 Terraform workload로 만든다.
 - GPU 패스스루 VM도 cloud01 전용 Nova alias, aggregate와 Terraform workload로 분리한다.
 
-전체 승인 지점은 [자동화 경계](docs/automation-boundaries.md)에 정리되어 있다.
+전체 승인 지점은 [자동화 경계](docs/architecture/automation-boundaries.md)에 정리되어 있다.
 
 ## 주요 디렉터리
 
 | 경로 | 역할 |
 | --- | --- |
+| `docs/` | 설치·설계·운영·workload·platform으로 분류한 문서 ([문서 지도](docs/README.md)) |
 | `inventory/openstack-cluster.yml` | 공개 3노드 Ceph topology 예시 |
 | `inventory/openstack-cluster.local.yml` | 실제 MAC, IP, OSD by-id를 넣는 ignored 파일 |
 | `ubuntu-autoinstall/` | 노드별 Ubuntu seed 입력 |
@@ -182,13 +183,13 @@ OpenStack 구축 후 일반 VM은 stack별로 만들고, Terraform output에서 
 | `.cache/ansible/workloads/` | Terraform output에서 생성한 private inventory |
 
 공개하면 안 되는 파일과 백업 위치는
-[로컬 설정·비밀·상태](docs/local-secrets-and-state.md)를 따른다.
+[로컬 설정·비밀·상태](docs/operations/local-data-and-recovery.md)를 따른다.
 일반 VM stack 생성과 적용 방식은
-[서비스별 Terraform workload](docs/terraform-workloads.md)에 정리되어 있다.
+[서비스별 Terraform workload](docs/workloads/terraform.md)에 정리되어 있다.
 
 ## 이후 확장
 
 `cloud04` 이후는 기존 세 컨트롤러를 유지하면서 compute 노드로 한 대씩 추가할 수 있다.
 Ceph 용량을 늘릴 때는 같은 device class의 OSD를 세 장애 도메인에 균형 있게 추가해야 한다.
 현재 `osd-plan/osd-apply`는 **빈 클러스터의 최초 OSD 배포만** 자동화하므로 운영 중 OSD 증설은
-별도 검토가 필요하다. [3노드 이후 확장](docs/three-node-expansion.md)을 참고한다.
+별도 검토가 필요하다. [3노드 이후 확장](docs/operations/cluster-expansion.md)을 참고한다.

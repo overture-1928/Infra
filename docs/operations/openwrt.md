@@ -1,5 +1,7 @@
 # OpenWrt Provider VLAN 자동화
 
+> 문서 위치: [전체 문서](../README.md) · [운영과 복구](README.md)
+
 OpenWrt는 세 OpenStack host의 관리망 gateway와 Provider VLAN 10 gateway를 제공한다. 최초
 OpenStack 배포 전에 `cloud01`~`cloud03` 전체의 probe를 통과해야 한다.
 

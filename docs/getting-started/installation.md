@@ -1,5 +1,7 @@
 # Ubuntu Server · Ceph · OpenStack · Kubernetes 설치 런북
 
+> 문서 위치: [전체 문서](../README.md) · [최초 설치](README.md)
+
 이 런북은 `cloud01`, `cloud02`, `cloud03` 세 대를 모두 준비한 뒤 새 클라우드를 만드는
 절차다. 단일 노드 OpenStack은 설치하지 않으며 이전할 기존 LVM 데이터도 만들지 않는다.
 
@@ -171,7 +173,7 @@ export OPENWRT_CONFIRM='<plan이 출력한 값>'
 ```
 
 최초 적용부터 `cloud01`~`cloud03`의 probe가 모두 성공해야 한다. 자세한 rollback 절차는
-[OpenWrt 라우터](openwrt-router.md)를 따른다.
+[OpenWrt 라우터](../operations/openwrt.md)를 따른다.
 
 ## 6. cloud01 Kolla 데이터 SSD
 
@@ -249,7 +251,7 @@ sudo --preserve-env=OPENSTACK_CLUSTER_CONFIG,CEPH_EXPORT_CONFIRM \
   ./scripts/ceph-cluster.sh export-kolla
 ```
 
-상세 안전 조건은 [Ceph 초기 구축](ceph-transition.md)에 정리되어 있다.
+상세 안전 조건은 [Ceph 초기 구축](../operations/ceph-initial-deployment.md)에 정리되어 있다.
 
 ## 8. 3노드 OpenStack 배포
 
@@ -337,15 +339,15 @@ ansible-inventory -i .cache/ansible/workloads/web.yml --graph
 `workload-apply`는 guest playbook을 자동 실행하지 않는다. Terraform 적용 결과와 IP를 검토한
 뒤 `workload-configure`를 명시적으로 실행한다. `terraform.tfvars`, `<stack>.local.yml`,
 Terraform state와 생성 inventory는 Git에서 제외하며 외부의 암호화 저장소에 백업한다. 자세한
-입력, 확인값과 실패 조건은 [서비스별 Terraform workload](terraform-workloads.md)를 따른다.
+입력, 확인값과 실패 조건은 [서비스별 Terraform workload](../workloads/terraform.md)를 따른다.
 
 ## 11. 이후 작업
 
 OpenStack과 Ceph의 장애 시험, 외부 상태 백업, Kubernetes 검증이 끝난 뒤 다음을 진행한다.
 
-- [Magnum/CAPI와 container platform](managed-services.md)
-- [cloud01 고정 스토리지 VM과 HBA 패스스루](storage-vm.md)
-- [5·7노드 또는 compute 노드 확장](three-node-expansion.md)
+- [Magnum/CAPI와 container platform](../platform/managed-services.md)
+- [cloud01 고정 스토리지 VM과 HBA 패스스루](../workloads/storage-vm.md)
+- [5·7노드 또는 compute 노드 확장](../operations/cluster-expansion.md)
 
 스토리지 VM의 root volume은 Ceph에 둘 수 있지만 HBA와 4TB·3TB HDD는 `cloud01`에 묶인다.
 해당 VM에는 HA나 live migration을 기대하지 않는다.

@@ -23,4 +23,4 @@ stack을 사용한다. 각 stack의 `terraform.tfvars`와 `terraform.tfstate*`�
 mode `0600`과 암호화 백업이 필요하다.
 
 전체 생성, 자원 ID 입력, plan 검토와 적용 절차는
-[서비스별 OpenStack VM Terraform 스택](../docs/terraform-workloads.md)을 따른다.
+[서비스별 OpenStack VM Terraform 스택](../docs/workloads/terraform.md)을 따른다.

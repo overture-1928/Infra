@@ -19,4 +19,4 @@
 
 일반 VM은 `cluster.sh workload-new/plan/show/apply`로 관리하고, guest 구성은
 `cluster.sh workload-inventory/configure`로 실행한다. 상황별 명령 선택은
-[상황별 운영 가이드](../docs/operations-guide.md)를 따른다.
+[상황별 운영 가이드](../docs/operations/scenarios.md)를 따른다.

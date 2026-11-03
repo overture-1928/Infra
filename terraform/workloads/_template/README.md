@@ -12,7 +12,7 @@ The wrapper copies only its explicit template-file allowlist, creates `terraform
 caches, credentials and override files left below `_template` are not copied. The relative module
 source in `main.tf` must remain `../../modules/openstack-vm`. Replace every placeholder in the local
 variable file and review the first plan while `enable_instances = false`. Set the switch to `true`
-only when the resulting create plan is ready. Follow `docs/terraform-workloads.md` for the full
+only when the resulting create plan is ready. Follow `docs/workloads/terraform.md` for the full
 workflow.
 
 After applying the stack, `workload-inventory` converts the `instances` output into a private

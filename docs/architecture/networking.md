@@ -1,5 +1,7 @@
 # 3노드 네트워크 분리
 
+> 문서 위치: [전체 문서](../README.md) · [아키텍처](README.md)
+
 최초 OpenStack 배포 전에 세 host의 관리/Provider 경로와 전용 10Gbps Ceph 경로를 모두
 준비한다.
 

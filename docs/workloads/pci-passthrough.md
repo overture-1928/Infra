@@ -1,5 +1,7 @@
 # cloud01 PCI 패스스루 VM
 
+> 문서 위치: [전체 문서](../README.md) · [OpenStack workload](README.md)
+
 이 문서는 `cloud01`의 GPU 한 장을 OpenStack VM 한 대에 전용 할당하는 절차를 설명한다.
 4TB·3TB HDD용 HBA도 같은 Nova PCI alias 구조를 사용하지만 실제 스토리지 구성은
 [고정 스토리지 VM](storage-vm.md)을 따른다.

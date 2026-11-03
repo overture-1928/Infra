@@ -1,109 +1,81 @@
-# 문서 안내
+# OpenStack 인프라 문서
 
-이 저장소는 기존 단일 노드를 전환하는 구성이 아니라, `cloud01`~`cloud03`이 모두 준비된
-상태에서 Ubuntu Server 24.04, Ceph, OpenStack과 management Kubernetes를 새로 구축하는
-자동화다. 실제 IP, MAC, 디스크 시리얼, SSH 키 경로와 인증정보는 Git에서 제외되는 로컬
-파일에만 기록한다.
+이 디렉터리는 문서의 목적에 따라 설치, 설계, 운영, workload, platform으로 나뉜다. 최초
+구축 명령은 `getting-started/`만 기준으로 실행하고, 나머지 문서는 설계 근거와 특정 상황의
+세부 절차를 설명한다.
 
-## 자동화 흐름
-
-```mermaid
-flowchart LR
-  LOCAL["로컬 topology<br/>IP · MAC · disk · SSH"]
-  HOST["Ansible<br/>Ubuntu · Netplan · OpenWrt"]
-  CEPH["cephadm<br/>3 OSD · RBD pools"]
-  KOLLA["Kolla-Ansible<br/>3노드 OpenStack"]
-  PLATFORM["Terraform + Kubespray<br/>management Kubernetes"]
-  WORKLOAD["Terraform workload<br/>VM · volume · security group"]
-  INVENTORY["자동 생성 Ansible inventory<br/>Terraform output 기반"]
-  CONFIG["서비스별 Ansible playbook"]
-
-  LOCAL --> HOST --> CEPH --> KOLLA --> PLATFORM
-  KOLLA --> WORKLOAD --> INVENTORY --> CONFIG
+```text
+docs/
+├── README.md                  # 전체 문서 지도
+├── getting-started/           # 처음 3노드를 설치하는 단일 실행 순서
+├── architecture/              # 네트워크와 자동화 안전 경계
+├── operations/                # 장애, 복구, Ceph, OpenWrt, 노드 확장
+├── workloads/                 # 일반 VM, Terraform, GPU/HBA 패스스루
+└── platform/                  # Magnum, CAPI, CAPO 관리형 서비스
 ```
 
-Terraform 적용과 Ansible 구성은 분리된 단계다. `workload-apply`가 VM을 만든다고 서비스
-playbook을 자동 실행하지 않는다. 운영자가 Terraform 결과를 확인한 뒤 `workload-inventory`
-또는 `workload-configure`를 실행한다.
-
-## 문서 선택 지도
+## 처음 읽는 순서
 
 ```mermaid
 flowchart TB
-  START([처음 저장소를 clone함])
-  SECRET["로컬 설정·비밀·상태<br/>Git 제외 파일과 백업"]
-  NETWORK["네트워크 분리<br/>관리 · Provider · Ceph · tenant"]
-  RUNBOOK["전체 설치 런북<br/>유일한 최초 구축 순서"]
-  OPENWRT["OpenWrt 상세<br/>plan · guard · rollback"]
-  CEPH["Ceph 상세<br/>빈 cluster 최초 배포"]
-  READY([3노드 cloud 검증 완료])
-  OPS{"현재 하려는 작업"}
-  VM["Terraform workload<br/>VM · volume · guest Ansible"]
-  PCI["PCI passthrough<br/>GPU 또는 HBA 고정 VM"]
-  SERVICE["관리형 서비스<br/>Magnum · CAPI · CAPO"]
-  EXPAND["3노드 이후 확장<br/>compute 추가 · Ceph 경계"]
-  INCIDENT["상황별 운영 가이드<br/>중단 · 장애 · 복구"]
+  START([새로운 3노드 구축])
+  LOCAL["로컬 데이터와 복구<br/>Git 제외 파일 · credential · state"]
+  NETWORK["네트워크 설계<br/>관리 · Provider · Ceph · tenant"]
+  INSTALL["3노드 설치 런북<br/>Ubuntu → Ceph → OpenStack → Kubernetes"]
+  READY([기본 cloud 검증 완료])
+  TASK{"다음 작업"}
+  INCIDENT["운영 시나리오<br/>중단 · 장애 · 복구"]
+  WORKLOAD["workload<br/>VM · Ansible · PCI"]
+  PLATFORM["platform<br/>Magnum · CAPI · CAPO"]
+  EXPAND["cluster 확장<br/>cloud04 이상"]
 
-  START --> SECRET --> NETWORK --> RUNBOOK
-  RUNBOOK -. 단계 상세 .-> OPENWRT
-  RUNBOOK -. 단계 상세 .-> CEPH
-  RUNBOOK --> READY --> OPS
-  OPS -->|일반 VM| VM
-  OPS -->|GPU·HDD| PCI
-  OPS -->|Kubernetes API 서비스| SERVICE
-  OPS -->|cloud04 이상| EXPAND
-  OPS -->|오류·재개| INCIDENT
+  START --> LOCAL --> NETWORK --> INSTALL --> READY --> TASK
+  TASK -->|문제 대응| INCIDENT
+  TASK -->|일반 VM·GPU·HDD| WORKLOAD
+  TASK -->|관리형 Kubernetes| PLATFORM
+  TASK -->|물리 노드 추가| EXPAND
 ```
 
-## 처음 구축할 때 읽는 순서
+1. [로컬 데이터와 복구](operations/local-data-and-recovery.md)에서 Git에 넣지 않을 파일과 백업
+   대상을 확인한다.
+2. [네트워크 설계](architecture/networking.md)에서 실제 NIC, VLAN, VIP와 주소 대역을 확정한다.
+3. [3노드 설치 런북](getting-started/installation.md)을 처음부터 순서대로 실행한다.
+4. 설치가 중단되거나 구축 후 변경이 필요하면 [상황별 운영 가이드](operations/scenarios.md)에서
+   해당 상황을 선택한다.
 
-1. [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)에서 공개 저장소와 로컬
-   파일의 경계를 확인한다.
-2. [3노드 네트워크 분리](network-segmentation.md)에서 관리, Provider VLAN, Ceph 10Gbps와
-   tenant 망을 확정한다.
-3. [전체 설치 런북](openstack-runbook.md)을 처음부터 순서대로 실행한다.
-4. Ceph 단계에서는 [Ceph 최초 구축과 안전 경계](ceph-transition.md)를 함께 확인한다.
-5. OpenWrt 변경 전에는 [OpenWrt Provider VLAN 자동화](openwrt-router.md)의 rollback 조건을
-   확인한다.
+## 문서 영역
 
-설치 명령의 기준 문서는 `openstack-runbook.md`다. 구성요소 문서는 상세 조건을 설명하지만
-전체 실행 순서를 대체하지 않는다.
-
-구축을 시작한 뒤 특정 오류나 변경 상황에 해당하면
-[상황별 운영 가이드](operations-guide.md)에서 지원되는 재개·복구·확장 경로를 먼저 확인한다.
-
-## 구축 후 작업
-
-| 작업 | 기준 문서 | 관리 범위 |
+| 영역 | 안내 | 다루는 범위 |
 | --- | --- | --- |
-| 중단·오류·변경 상황 선택 | [상황별 운영 가이드](operations-guide.md) | 현재 상태 확인, 안전한 재개, 지원 경계 |
-| 일반 VM과 서비스 구성 | [서비스별 Terraform workload](terraform-workloads.md) | 독립 Terraform state, 자동 생성 Ansible inventory, 서비스 playbook |
-| cloud01 HDD VM | [고정 스토리지 VM](storage-vm.md) | HBA passthrough, host aggregate, 전용 flavor |
-| cloud01 GPU VM | [PCI 패스스루 VM](pci-passthrough-vm.md) | GPU VFIO, Nova alias, 고정 배치와 제약 |
-| Magnum·CAPI·CAPO | [관리형 서비스](managed-services.md) | management Kubernetes와 OpenStack 관리 서비스 |
-| cloud04 이후 추가 | [3노드 이후 확장](three-node-expansion.md) | Kolla compute 확장과 별도 검토가 필요한 Ceph 증설 |
+| 최초 설치 | [getting-started](getting-started/README.md) | 새 3노드 Ubuntu, Ceph, OpenStack, management Kubernetes |
+| 설계 | [architecture](architecture/README.md) | 망분리, 데이터 경로, 자동화 승인·차단 경계 |
+| 운영 | [operations](operations/README.md) | 상태 판단, OpenWrt, Ceph 최초 구축, 복구, 노드 확장 |
+| VM과 애플리케이션 | [workloads](workloads/README.md) | Terraform stack, Ansible guest 구성, GPU/HBA VM |
+| 관리형 서비스 | [platform](platform/README.md) | Magnum, CAPI, CAPO, Octavia와 Hosted Control Plane 경계 |
 
-## 참조 문서
+## 문서 역할
 
-| 문서 | 답하는 질문 |
+- [3노드 설치 런북](getting-started/installation.md)은 최초 구축의 유일한 실행 순서다.
+- [상황별 운영 가이드](operations/scenarios.md)는 현재 상태에서 어떤 상세 문서를 선택할지
+  판단하는 진입점이다.
+- `architecture/` 문서는 설정값의 이유와 자동화가 허용하는 범위를 설명한다.
+- `operations/`의 구성요소 문서는 해당 단계의 검증, 실패 조건과 복구 경계를 설명한다.
+- `workloads/` 문서는 OpenStack 구축이 끝난 뒤 생성하는 VM과 guest 설정만 다룬다.
+- 실제 IP, MAC, 디스크 시리얼, SSH 키 경로, credential과 state는 문서나 추적 파일에 기록하지
+  않고 ignored 로컬 파일과 저장소 밖 암호화 백업에 둔다.
+
+## 명령 진입점
+
+| 목적 | 명령 |
 | --- | --- |
-| [자동화 범위와 승인 지점](automation-boundaries.md) | 어떤 작업이 자동화되고 어디서 확인값이 필요한가? |
-| [로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md) | 어떤 파일을 Git에서 제외하고 무엇을 백업해야 하는가? |
-| [3노드 네트워크 분리](network-segmentation.md) | 각 NIC, VLAN, VIP와 주소 대역의 역할은 무엇인가? |
-| [Ceph 최초 구축과 안전 경계](ceph-transition.md) | 어떤 디스크가 초기화되고 기존 OSD가 있으면 왜 중단하는가? |
-
-## 주요 실행 명령
-
-| 단계 | 명령 |
-| --- | --- |
-| topology 검사와 도구 준비 | `cluster.sh validate`, `cluster.sh setup`, `cluster.sh render` |
-| 물리 호스트 | `cluster.sh prepare-hosts`, `cluster.sh verify-hosts` |
+| topology와 도구 | `cluster.sh validate/setup/render` |
+| 물리 호스트 | `cluster.sh prepare-hosts/verify-hosts` |
 | OpenWrt | `cluster.sh openwrt-discover/plan/apply/status` |
 | Ceph | `ceph-cluster.sh validate/preflight/bootstrap/...` |
-| OpenStack | `cluster.sh deploy-openstack`, `cluster.sh verify-openstack` |
+| OpenStack | `cluster.sh deploy-openstack/verify-openstack` |
 | management Kubernetes | `cluster.sh terraform-plan/apply`, `cluster.sh deploy-kubernetes` |
-| 일반 workload VM | `cluster.sh workload-new/plan/show/apply` |
-| workload guest 구성 | `cluster.sh workload-inventory/configure` |
+| 일반 VM | `cluster.sh workload-new/plan/show/apply` |
+| VM guest 구성 | `cluster.sh workload-inventory/configure` |
 
-사용자가 직접 실행하는 명령과 내부 구현의 구분은 [스크립트 구성](../scripts/README.md),
-Ansible playbook 분류는 [Ansible playbook 구성](../ansible/playbooks/README.md)을 따른다.
+스크립트의 공개 진입점과 내부 구현은 [스크립트 안내](../scripts/README.md), Ansible 분류는
+[playbook 안내](../ansible/playbooks/README.md)를 따른다.

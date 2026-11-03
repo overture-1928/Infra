@@ -1,5 +1,7 @@
 # 자동화 범위와 승인 지점
 
+> 문서 위치: [전체 문서](../README.md) · [아키텍처](README.md)
+
 이 저장소는 새 3노드 Ceph/OpenStack 구축을 기준으로 한다. 각 파괴적 작업은 바로 앞의
 읽기 전용 plan이 출력한 확인값을 요구한다.
 
@@ -101,7 +103,7 @@ secret 처리 방식은 해당 playbook에 명시하며 자동으로 생성하�
 - SSH 개인키가 절대경로가 아니거나 읽을 수 없는 경우
 - settings 또는 생성 inventory의 권한이 `0600`이 아닌 경우
 
-자세한 작업 순서는 [서비스별 Terraform workload](terraform-workloads.md)를 따른다.
+자세한 작업 순서는 [서비스별 Terraform workload](../workloads/terraform.md)를 따른다.
 
 ## cloud01 고정 PCI VM
 
@@ -114,11 +116,11 @@ secret 처리 방식은 해당 playbook에 명시하며 자동으로 생성하�
 4. Terraform이 cloud01 aggregate, 전용 flavor와 고정 VM을 생성한다.
 
 장치가 연결된 `cloud01`에만 배치되며 live migration이나 HA 대상이 아니다. OS 디스크와 같은
-SATA controller를 넘기지 않는다. HBA는 [스토리지 VM](storage-vm.md), GPU는
-[PCI 패스스루 VM](pci-passthrough-vm.md)을 따른다.
+SATA controller를 넘기지 않는다. HBA는 [스토리지 VM](../workloads/storage-vm.md), GPU는
+[PCI 패스스루 VM](../workloads/pci-passthrough.md)을 따른다.
 
 ## 비밀과 상태
 
 실제 MAC, IP, 디스크 시리얼, SSH 키, Ceph keyring, Kolla passwords, clouds.yaml, Terraform
 state와 kubeconfig는 공개 저장소에 넣지 않는다. 파일 목록과 백업 기준은
-[로컬 설정·비밀·상태](local-secrets-and-state.md)에 있다.
+[로컬 설정·비밀·상태](../operations/local-data-and-recovery.md)에 있다.

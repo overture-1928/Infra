@@ -1,5 +1,7 @@
 # 서비스별 OpenStack VM Terraform 스택
 
+> 문서 위치: [전체 문서](../README.md) · [OpenStack workload](README.md)
+
 일반 애플리케이션 VM은 management Kubernetes를 만드는 `terraform/openstack/`에 추가하지
 않는다. 서비스 또는 수명주기가 같은 VM 묶음마다 `terraform/workloads/<stack>/`을 독립적인
 Terraform root로 만든다. 각 root는 자신의 변수, plan과 state만 읽으므로 한 서비스의 변경을

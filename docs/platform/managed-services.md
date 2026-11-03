@@ -1,11 +1,13 @@
 # Magnum CAPI 관리형 서비스
 
+> 문서 위치: [전체 문서](../README.md) · [관리형 플랫폼](README.md)
+
 최초 3노드 OpenStack을 검증할 때까지 모든 관리형 서비스 플래그를 끈다.
 `platform-services.sh`는 물리 노드 3대, 세 OSD 호스트의 정상 Ceph, Ready 상태인 management Kubernetes control plane 3대가
 확인되기 전에는 Kubernetes와 OpenStack을 변경하지 않는다. Management cluster에는 동적
 프로비저닝을 지원하는 비로컬 기본 StorageClass도 정확히 하나 있어야 한다.
 Application credential, kubeconfig와 Terraform 상태의 보관·백업 기준은
-[로컬 전용 설정, 인증정보와 운영 상태](local-secrets-and-state.md)를 따른다.
+[로컬 전용 설정, 인증정보와 운영 상태](../operations/local-data-and-recovery.md)를 따른다.
 
 ## Management Kubernetes 부트스트랩
 

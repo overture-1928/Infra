@@ -1,5 +1,7 @@
 # 로컬 전용 설정, 인증정보와 운영 상태
 
+> 문서 위치: [전체 문서](../README.md) · [운영과 복구](README.md)
+
 공개 저장소에 추적되는 인벤토리와 변수 파일은 실행 구조를 설명하기 위한 예시다. 실제 IP,
 MAC 주소, 디스크 시리얼, 장비 포트와 인증정보는 예시 파일에 직접 쓰지 않는다. 실제 환경은
 Git에서 제외되는 로컬 입력 파일과 자동 생성되는 비밀 파일로 관리한다.
@@ -79,7 +81,7 @@ chmod 0600 kolla/config/nova/nova-compute.conf kolla/config/nova.conf
 ```
 
 Ceph도 동일한 3노드 `inventory/openstack-cluster.local.yml`을 사용한다. 별도의 전환
-topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-transition.md)을 따른다.
+topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-initial-deployment.md)을 따른다.
 
 `openstack-cluster.local.yml`과 `openstack-plan.local.yml`의 실제 망과 디스크 역할은 서로
 일치해야 한다. `openwrt-router.local.yml`은 discovery 결과를 확인하기 전까지
@@ -90,7 +92,7 @@ topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-tran
 `terraform/workloads/<stack>/terraform.tfvars`와
 `ansible/inventory/workloads/<stack>.local.yml`도 mode `0600`으로 유지하며 첫 plan까지
 `enable_instances = false`로 둔다. 서비스별 state를 섞지 않으며 자세한 생성·적용 절차는
-[서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)을 따른다.
+[서비스별 OpenStack VM Terraform 스택](../workloads/terraform.md)을 따른다.
 
 실제 비밀번호, OpenStack application credential secret, kubeconfig 내용과 SSH 개인키 본문은
 이 입력 파일에 적지 않는다. cloud-init user data에도 비밀번호, 장기 token, SSH 개인키나
@@ -211,8 +213,8 @@ git diff --cached
 credential이 원격 저장소에 한 번이라도 올라갔다면 Git에서 삭제하는 것만으로 끝내지 않고
 해당 비밀번호, token 또는 key를 폐기하고 교체한다.
 
-세부 생성 순서는 [OpenStack 설치 런북](openstack-runbook.md), OpenWrt 입력은
-[OpenWrt Provider VLAN 자동화](openwrt-router.md), Ceph 입력과 keyring은
-[Ceph 최초 구축](ceph-transition.md), management credential과 kubeconfig는
-[Magnum CAPI 관리형 서비스](managed-services.md), 일반 VM의 독립 state는
-[서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)을 따른다.
+세부 생성 순서는 [OpenStack 설치 런북](../getting-started/installation.md), OpenWrt 입력은
+[OpenWrt Provider VLAN 자동화](openwrt.md), Ceph 입력과 keyring은
+[Ceph 최초 구축](ceph-initial-deployment.md), management credential과 kubeconfig는
+[Magnum CAPI 관리형 서비스](../platform/managed-services.md), 일반 VM의 독립 state는
+[서비스별 OpenStack VM Terraform 스택](../workloads/terraform.md)을 따른다.

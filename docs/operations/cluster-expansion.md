@@ -1,5 +1,7 @@
 # 3노드 구축 이후 5·7노드 확장
 
+> 문서 위치: [전체 문서](../README.md) · [운영과 복구](README.md)
+
 최초 설치는 `cloud01`~`cloud03`의 control, network, compute와 Ceph를 완성한 상태에서
 끝난다. 이 문서는 검증된 3노드 클라우드에 `cloud04` 이후 호스트를 추가하는 절차다.
 
