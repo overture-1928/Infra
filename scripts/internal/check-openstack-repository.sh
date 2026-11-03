@@ -250,8 +250,8 @@ assert 'mktemp "$platform_cache/management-cluster.XXXXXX"' in platform_services
 
 openstack_script = Path("scripts/openstack.sh").read_text()
 cluster_script = Path("scripts/cluster.sh").read_text()
-prepare_playbook = Path("ansible/playbooks/prepare-openstack-host.yml").read_text()
-verify_playbook = Path("ansible/playbooks/verify-openstack-hosts.yml").read_text()
+prepare_playbook = Path("ansible/playbooks/openstack/prepare-openstack-host.yml").read_text()
+verify_playbook = Path("ansible/playbooks/openstack/verify-openstack-hosts.yml").read_text()
 assert yaml.safe_load(Path("inventory/openstack-plan.yml").read_text())["openstack"]["deployment"] == "fresh-three-node-ceph"
 assert 'inventory="$generated_dir/multinode"' in openstack_script
 assert 'http://$(api_vip):9999' in openstack_script
@@ -1569,10 +1569,10 @@ cmp "$work_dir/openwrt-preserved-plan.json" "$openwrt_output/plan.json"
 python3 - <<'PY'
 from pathlib import Path
 
-apply = Path("ansible/playbooks/apply-openwrt.yml").read_text()
-cleanup = Path("ansible/playbooks/cleanup-openwrt-prearm.yml").read_text()
-probe = Path("ansible/playbooks/probe-openstack-provider.yml").read_text()
-discovery_playbook = Path("ansible/playbooks/discover-openwrt.yml").read_text()
+apply = Path("ansible/playbooks/openwrt/apply-openwrt.yml").read_text()
+cleanup = Path("ansible/playbooks/openwrt/cleanup-openwrt-prearm.yml").read_text()
+probe = Path("ansible/playbooks/openwrt/probe-openstack-provider.yml").read_text()
+discovery_playbook = Path("ansible/playbooks/openwrt/discover-openwrt.yml").read_text()
 assert "['scp', '-O', '-P'" in apply
 assert 'uci -q changes "${config}"' in apply
 assert "USE_PROCD=1" in apply and "FINALIZE_LOCK" in apply
@@ -1590,7 +1590,7 @@ assert "provider.deployed" in probe and "port-to-br" in probe
 assert "rollback_guard_change_id=(.*)$', '\\\\1')" in discovery_playbook
 wrapper = Path("scripts/internal/openwrt-router.sh").read_text()
 assert "provider_probe_limit" not in wrapper
-assert '"$repo_dir/ansible/playbooks/probe-openstack-provider.yml"' in wrapper
+assert '"$repo_dir/ansible/playbooks/openwrt/probe-openstack-provider.yml"' in wrapper
 assert "flock -n 9" in wrapper and "cleanup-openwrt-prearm.yml" in wrapper
 PY
 
@@ -1608,9 +1608,18 @@ all:
         cloud01:
 YAML
   "$ansible_inventory_bin" -i "$work_dir/topology-output/ansible-inventory.yml" --list >/dev/null
-  for playbook in ansible/playbooks/*.yml; do
+  mapfile -d '' ansible_playbooks < <(
+    find ansible/playbooks -mindepth 2 -maxdepth 2 -type f -name '*.yml' -print0 | sort -z
+  )
+  (( ${#ansible_playbooks[@]} > 0 )) || {
+    echo 'No Ansible playbooks found.' >&2
+    exit 1
+  }
+  for playbook in "${ansible_playbooks[@]}"; do
     playbook_inventory="$work_dir/topology-output/ansible-inventory.yml"
-    if [[ $playbook == *openwrt.yml ]]; then
+    if [[ $playbook == *probe-openstack-provider.yml ]]; then
+      :
+    elif [[ $playbook == ansible/playbooks/openwrt/* ]]; then
       playbook_inventory="$openwrt_inventory"
     elif [[ $playbook == *prepare-openstack-kubernetes.yml ]]; then
       playbook_inventory="$kubespray_repo/.cache/kubespray-inventory/openstack/hosts.yml"

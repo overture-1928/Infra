@@ -5,7 +5,7 @@
   serial: 1
   any_errors_fatal: true
   vars:
-    openwrt_discovery_path: "{{ playbook_dir }}/../../.cache/openwrt/discovery.json"
+    openwrt_discovery_path: "{{ playbook_dir }}/../../../.cache/openwrt/discovery.json"
   tasks:
     - name: Require exactly one OpenWrt router
       ansible.builtin.assert:

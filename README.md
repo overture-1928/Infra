@@ -154,7 +154,7 @@ sudo ./scripts/cluster.sh verify-openstack
 | `inventory/openstack-cluster.yml` | 공개 3노드 Ceph topology 예시 |
 | `inventory/openstack-cluster.local.yml` | 실제 MAC, IP, OSD by-id를 넣는 ignored 파일 |
 | `ubuntu-autoinstall/` | 노드별 Ubuntu seed 입력 |
-| `ansible/` | 호스트, Netplan, IOMMU 준비와 검증 |
+| `ansible/` | 호스트·OpenWrt 준비와 검증 ([playbook 구성](ansible/playbooks/README.md)) |
 | `kolla/` | Kolla globals, inventory와 Nova PCI 예시 |
 | `scripts/` | 운영자 진입점과 `internal/` 하위 구현 ([구성 설명](scripts/README.md)) |
 | `scripts/ceph-cluster.sh` | cephadm 초기 cluster와 OSD/pool/client 구성 |

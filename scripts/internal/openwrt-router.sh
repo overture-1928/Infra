@@ -69,7 +69,7 @@ cluster_playbook() {
 discover_router() {
   require_inventory
   mkdir -p "$openwrt_cache"
-  openwrt_playbook "$repo_dir/ansible/playbooks/discover-openwrt.yml"
+  openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/discover-openwrt.yml"
   printf 'OpenWrt discovery: %s\n' "$openwrt_discovery"
 }
 
@@ -144,7 +144,7 @@ cleanup_previous_prearm_attempt() {
   previous_attempt=$(cat "$openwrt_attempt_file")
   [[ $previous_attempt =~ ^[0-9a-f]{32}$ ]] || fail 'The saved OpenWrt apply attempt ID is invalid.'
   export OPENWRT_APPLY_ATTEMPT=$previous_attempt
-  openwrt_playbook "$repo_dir/ansible/playbooks/cleanup-openwrt-prearm.yml" || fail \
+  openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/cleanup-openwrt-prearm.yml" || fail \
     'The previous apply is still active or guarded; inspect openwrt-status or run the exact rollback.'
   rm -f "$openwrt_attempt_file"
 }
@@ -163,20 +163,20 @@ apply_router() {
   require_apply_confirmations
   begin_apply_attempt
 
-  if ! openwrt_playbook "$repo_dir/ansible/playbooks/apply-openwrt.yml"; then
-    if openwrt_playbook "$repo_dir/ansible/playbooks/cleanup-openwrt-prearm.yml"; then
+  if ! openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/apply-openwrt.yml"; then
+    if openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/cleanup-openwrt-prearm.yml"; then
       rm -f "$openwrt_attempt_file"
     fi
     guarded_failure
   fi
-  openwrt_playbook "$repo_dir/ansible/playbooks/verify-openwrt.yml" || guarded_failure
+  openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/verify-openwrt.yml" || guarded_failure
 
   select_cluster_config
   "$repo_dir/scripts/internal/render-openstack-cluster.py" --config "$cluster_config" >/dev/null || guarded_failure
   cluster_playbook \
-    "$repo_dir/ansible/playbooks/probe-openstack-provider.yml" || guarded_failure
+    "$repo_dir/ansible/playbooks/openwrt/probe-openstack-provider.yml" || guarded_failure
 
-  openwrt_playbook "$repo_dir/ansible/playbooks/confirm-openwrt.yml" || guarded_failure
+  openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/confirm-openwrt.yml" || guarded_failure
   rm -f "$openwrt_attempt_file"
   printf '%s\n' \
     'OpenWrt VLAN 10 routing was applied and confirmed after every enabled OpenStack node was verified.'
@@ -213,12 +213,12 @@ HELP
     require_plan
     openwrt_playbook \
       -e openwrt_require_guard_armed=false \
-      "$repo_dir/ansible/playbooks/verify-openwrt.yml"
+      "$repo_dir/ansible/playbooks/openwrt/verify-openwrt.yml"
     ;;
   rollback)
     require_inventory
     require_plan
-    openwrt_playbook "$repo_dir/ansible/playbooks/rollback-openwrt.yml"
+    openwrt_playbook "$repo_dir/ansible/playbooks/openwrt/rollback-openwrt.yml"
     ;;
   *)
     fail "Unknown command: $command_name"

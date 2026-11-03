@@ -129,7 +129,7 @@ if [[ $action == control || $action == initial-control ]]; then
   }
 fi
 
-prepare_args=(-i "$inventory" "$repo_dir/ansible/playbooks/prepare-openstack-kubernetes.yml")
+prepare_args=(-i "$inventory" "$repo_dir/ansible/playbooks/openstack/prepare-openstack-kubernetes.yml")
 [[ -z $new_nodes ]] || prepare_args+=(--limit "$new_nodes")
 "$ansible_playbook" "${prepare_args[@]}"
 

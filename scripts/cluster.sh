@@ -103,7 +103,7 @@ PY
 
 verify_hosts() {
   render_all
-  ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
+  ansible_playbook "$repo_dir/ansible/playbooks/openstack/verify-openstack-hosts.yml"
 }
 
 deploy_openstack() {
@@ -111,7 +111,7 @@ deploy_openstack() {
   render_all
   require_initial_three_node_ceph
   reject_generic_managed_deploy initial
-  ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
+  ansible_playbook "$repo_dir/ansible/playbooks/openstack/verify-openstack-hosts.yml"
   "$repo_dir/scripts/openstack.sh" bootstrap --inventory "$kolla_inventory"
   "$repo_dir/scripts/openstack.sh" gather-facts --inventory "$kolla_inventory"
   "$repo_dir/scripts/openstack.sh" deploy --inventory "$kolla_inventory"
@@ -169,7 +169,7 @@ HELP
     ;;
   prepare-hosts)
     render_all
-    ansible_playbook "$repo_dir/ansible/playbooks/prepare-openstack-host.yml"
+    ansible_playbook "$repo_dir/ansible/playbooks/openstack/prepare-openstack-host.yml"
     echo 'Host preparation completed. Reboot changed hosts, then run verify-hosts.'
     ;;
   verify-hosts)
@@ -203,7 +203,7 @@ HELP
     expected="EXPAND-OPENSTACK:${enabled_hosts}"
     [[ ${OPENSTACK_EXPAND_CONFIRM:-} == "$expected" ]] || \
       fail "Set OPENSTACK_EXPAND_CONFIRM='$expected' after reviewing the rendered inventories."
-    ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
+    ansible_playbook "$repo_dir/ansible/playbooks/openstack/verify-openstack-hosts.yml"
     "$repo_dir/scripts/openstack.sh" backup --inventory "$kolla_inventory"
     "$repo_dir/scripts/openstack.sh" gather-facts --inventory "$kolla_inventory"
     "$repo_dir/scripts/openstack.sh" bootstrap --inventory "$kolla_inventory"

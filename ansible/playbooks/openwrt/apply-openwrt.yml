@@ -5,9 +5,9 @@
   serial: 1
   any_errors_fatal: true
   vars:
-    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
-    openwrt_uci_batch_path: "{{ playbook_dir }}/../../.cache/openwrt/uci.batch"
-    openwrt_state_root: "{{ playbook_dir }}/../../state/openwrt"
+    openwrt_plan_path: "{{ playbook_dir }}/../../../.cache/openwrt/plan.json"
+    openwrt_uci_batch_path: "{{ playbook_dir }}/../../../.cache/openwrt/uci.batch"
+    openwrt_state_root: "{{ playbook_dir }}/../../../state/openwrt"
   pre_tasks:
     - name: Require exactly one OpenWrt router
       ansible.builtin.assert:

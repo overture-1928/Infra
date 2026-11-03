@@ -12,7 +12,7 @@ ansible_inventory="$cache_dir/ansible-inventory.yml"
 osd_spec="$cache_dir/ceph-osd-spec.yml"
 manifest="$cache_dir/ceph-osd-manifest.txt"
 digest_file="$cache_dir/ceph-osd-manifest.sha256"
-device_playbook="$repo_dir/ansible/playbooks/verify-ceph-devices.yml"
+device_playbook="$repo_dir/ansible/playbooks/openstack/verify-ceph-devices.yml"
 temp_dir=
 
 if [[ -n ${OPENSTACK_CLUSTER_CONFIG:-} ]]; then

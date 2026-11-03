@@ -6,7 +6,7 @@
   serial: 1
   any_errors_fatal: true
   vars:
-    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
+    openwrt_plan_path: "{{ playbook_dir }}/../../../.cache/openwrt/plan.json"
   pre_tasks:
     - name: Load the reviewed router plan on the controller
       ansible.builtin.set_fact:

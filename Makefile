@@ -12,7 +12,7 @@ fmt:
 host-syntax:
 	ANSIBLE_LOCAL_TEMP=/tmp/infra-openstack-ansible \
 		ansible-playbook -i ansible/inventory/openstack-three-node.yml \
-		ansible/playbooks/prepare-openstack-host.yml --syntax-check
+		ansible/playbooks/openstack/prepare-openstack-host.yml --syntax-check
 
 terraform-init:
 	$(TERRAFORM) -chdir=terraform/openstack init
