@@ -42,12 +42,17 @@ prepare_terraform() {
 }
 
 render_all() {
-  legacy_single_inventory="$repo_dir/kolla/generated/all"-in-one
-  [[ ! -f $legacy_single_inventory ]] || \
-    printf 'WARNING: the legacy single-node Kolla inventory is ignored; the stable inventory is generated/multinode.\n' >&2
   render_topology
   require_kolla
   "$repo_dir/scripts/render-kolla-multinode.sh"
+}
+
+require_initial_three_node_ceph() {
+  local node_count backend
+  node_count=$(plan_value node_count)
+  backend=$(plan_value storage_backend)
+  (( node_count >= 3 )) || fail 'Initial OpenStack deployment requires at least three enabled physical nodes.'
+  [[ $backend == ceph ]] || fail 'Initial OpenStack deployment requires the Ceph storage backend.'
 }
 
 ansible_playbook() {
@@ -104,6 +109,7 @@ verify_hosts() {
 deploy_openstack() {
   require_root
   render_all
+  require_initial_three_node_ceph
   reject_generic_managed_deploy initial
   ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
   "$repo_dir/scripts/openstack.sh" bootstrap --inventory "$kolla_inventory"
@@ -123,14 +129,14 @@ Usage: scripts/cluster.sh COMMAND [ARGUMENTS]
   setup                install pinned Kolla/Terraform tooling, preserve passwords, render inventories
   render               regenerate Ansible and Kolla inventories
   prepare-hosts        configure every enabled Ubuntu host; reboot them afterwards
-  verify-hosts         verify hostnames, NICs, time, Docker mounts and local LVM
+  verify-hosts         verify hostnames, management/Ceph NICs, time and Docker storage
   openwrt-discover     collect read-only OpenWrt hardware and network facts
   openwrt-plan         render the OpenWrt VLAN 10 UCI plan without changing it
   openwrt-apply        apply, probe and confirm OpenWrt with an automatic rollback guard
   openwrt-status       verify the last confirmed OpenWrt plan
   openwrt-rollback     manually trigger a still-armed OpenWrt rollback transaction
-  deploy-openstack     deploy the current one-node or fresh multinode topology (root)
-  expand-openstack     back up DB and expand an existing cloud to 3+ nodes (root, confirmation)
+  deploy-openstack     deploy a fresh three-node-or-larger Ceph-backed cloud (root)
+  expand-openstack     back up DB and add hosts after the initial three-node cloud (root, confirmation)
   verify-openstack     verify APIs and registered OpenStack services
   terraform-plan       create a reviewed Kubernetes infrastructure plan
   terraform-apply      apply that saved plan serially (confirmation)
@@ -147,8 +153,8 @@ Usage: scripts/cluster.sh COMMAND [ARGUMENTS]
   platform-status      verify deployed CAPI, Magnum, Octavia and OVN state (root)
   hosted-plan          render a future-only K0smotron hosted-control-plane scaffold
 
-Edit inventory/openstack-cluster.local.yml to enable future physical nodes.
-Destructive disk preparation and LVM-to-Ceph data migration are separate reviewed workflows.
+Do not deploy until cloud01-cloud03 and their dedicated Ceph devices are ready.
+Future compute/OSD expansion remains a separate reviewed workflow.
 HELP
     ;;
   validate)
@@ -192,7 +198,7 @@ HELP
     render_all
     reject_generic_managed_deploy expand
     node_count=$(plan_value node_count)
-    (( node_count >= 3 )) || fail 'Expansion requires at least three enabled nodes.'
+    (( node_count >= 4 )) || fail 'Expansion is only for adding hosts after the initial three-node deployment.'
     enabled_hosts=$(plan_value nodes)
     expected="EXPAND-OPENSTACK:${enabled_hosts}"
     [[ ${OPENSTACK_EXPAND_CONFIRM:-} == "$expected" ]] || \

@@ -129,6 +129,7 @@ install_config() {
   install -m 0600 "$generated_dir/passwords.yml" /etc/kolla/passwords.yml
   cp -a "$repo_dir/kolla/config/." /etc/kolla/config/
   rm -f /etc/kolla/config/nova/nova-compute.conf.example
+  rm -f /etc/kolla/config/nova.conf.example
 
   magnum_kubeconfig="$generated_dir/magnum/kubeconfig"
   if [[ -f $magnum_kubeconfig ]]; then
@@ -150,13 +151,6 @@ install_config() {
   fi
 }
 
-require_local_storage() {
-  [[ $(storage_backend) != lvm ]] || {
-    findmnt -n /var/lib/docker >/dev/null || fail '/var/lib/docker is not a separate mounted filesystem.'
-    vgs cinder-ssd >/dev/null 2>&1 || fail 'VG cinder-ssd is missing.'
-  }
-}
-
 case "$command_name" in
   help)
     cat <<'HELP'
@@ -175,7 +169,7 @@ Usage: scripts/openstack.sh COMMAND [--inventory PATH] [--limit PATTERN]
   cloud-init       upload the Ubuntu 24.04 cloud image (root)
   check            check deployed container services (root)
 
-The stable inventory key is cloud01 for both one-node and multinode operation.
+The initial supported inventory contains cloud01, cloud02 and cloud03.
 The script intentionally has no destroy command.
 HELP
     ;;
@@ -187,7 +181,6 @@ HELP
     ;;
   bootstrap)
     install_config
-    require_local_storage
     run_kolla bootstrap-servers
     ;;
   gather-facts)
@@ -196,7 +189,6 @@ HELP
     ;;
   prechecks)
     install_config
-    require_local_storage
     run_kolla prechecks
     ;;
   pull)
@@ -205,7 +197,6 @@ HELP
     ;;
   deploy)
     install_config
-    require_local_storage
     run_kolla prechecks
     run_kolla pull
     run_kolla deploy

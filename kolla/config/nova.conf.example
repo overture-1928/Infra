@@ -1,0 +1,8 @@
+# Copy to kolla/config/nova.conf with mode 0600 when enabling the storage HBA.
+# The alias must exist in nova-api as well as nova-compute configuration.
+[pci]
+alias = {"vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT","device_type":"type-PCI","name":"storage-hba"}
+# alias = {"vendor_id":"REPLACE_GPU_VENDOR","product_id":"REPLACE_GPU_PRODUCT","device_type":"type-PCI","name":"gpu"}
+
+[filter_scheduler]
+enabled_filters = ComputeFilter,ComputeCapabilitiesFilter,ImagePropertiesFilter,ServerGroupAntiAffinityFilter,ServerGroupAffinityFilter,AggregateInstanceExtraSpecsFilter

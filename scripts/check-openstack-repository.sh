@@ -49,6 +49,7 @@ for pattern in \
   'inventory/*.local.yaml' \
   'kolla/generated/' \
   'kolla/config/nova/nova-compute.conf' \
+  'kolla/config/nova.conf' \
   'kubeconfig/' \
   'clouds.yaml' \
   'secure.yaml' \
@@ -80,11 +81,11 @@ done
 
 for local_private_file in \
   inventory/openstack-cluster.local.yml \
-  inventory/openstack-cluster.ceph.local.yml \
   inventory/openstack-plan.local.yml \
   inventory/openwrt-router.local.yml \
   terraform/openstack/terraform.tfvars \
-  kolla/config/nova/nova-compute.conf; do
+  kolla/config/nova/nova-compute.conf \
+  kolla/config/nova.conf; do
   [[ ! -e $local_private_file ]] || [[ $(stat -c '%a' "$local_private_file") == 600 ]] || {
     echo "Local private input must use mode 0600: $local_private_file" >&2
     exit 1
@@ -133,7 +134,7 @@ for path in sorted(set(yaml_files)):
         for play in documents[0]:
             assert isinstance(play, dict) and "hosts" in play, f"{path}: invalid Ansible play"
 
-for inventory_path in (Path("ansible/inventory/openstack-single.yml"),):
+for inventory_path in (Path("ansible/inventory/openstack-three-node.yml"),):
     inventory = yaml.safe_load(inventory_path.read_text())
     assert isinstance(inventory, dict) and isinstance(inventory.get("all"), dict), (
         f"{inventory_path}: invalid Ansible inventory root"
@@ -174,11 +175,11 @@ assert untouched == expected, "protected disk serial set changed"
 public_serials = {
     plan["storage"]["os"]["serial"],
     plan["storage"]["openstack_data"]["serial"],
-    plan["storage"]["ceph_reserve"]["serial"],
+    plan["storage"]["ceph_osd"]["serial"],
     *untouched,
 }
-assert plan["storage"]["ceph_reserve"]["device_class"] == "nvme"
-assert plan["storage"]["ceph_reserve"]["min_size_bytes"] >= 1_800_000_000_000
+assert plan["storage"]["ceph_osd"]["device_class"] == "nvme"
+assert plan["storage"]["ceph_osd"]["min_size_bytes"] >= 1_800_000_000_000
 assert all(str(serial).startswith("EXAMPLE-") for serial in public_serials), (
     "the tracked OpenStack plan must contain only public example disk serials"
 )
@@ -251,7 +252,7 @@ openstack_script = Path("scripts/openstack.sh").read_text()
 cluster_script = Path("scripts/cluster.sh").read_text()
 prepare_playbook = Path("ansible/playbooks/prepare-openstack-host.yml").read_text()
 verify_playbook = Path("ansible/playbooks/verify-openstack-hosts.yml").read_text()
-assert yaml.safe_load(Path("inventory/openstack-plan.yml").read_text())["openstack"]["deployment"] == "single-node-on-multinode-inventory"
+assert yaml.safe_load(Path("inventory/openstack-plan.yml").read_text())["openstack"]["deployment"] == "fresh-three-node-ceph"
 assert 'inventory="$generated_dir/multinode"' in openstack_script
 assert 'http://$(api_vip):9999' in openstack_script
 assert 'kolla_inventory="$repo_dir/kolla/generated/multinode"' in cluster_script
@@ -281,7 +282,7 @@ import yaml
 plan = yaml.safe_load(Path(sys.argv[1]).read_text())
 plan["storage"]["os"]["serial"] = "CHECK-OS"
 plan["storage"]["openstack_data"]["serial"] = "CHECK-DATA"
-plan["storage"]["ceph_reserve"]["serial"] = "CHECK-CEPH"
+plan["storage"]["ceph_osd"]["serial"] = "CHECK-CEPH"
 plan["storage"]["untouched"] = [{"serial": "CHECK-PROTECTED"}]
 Path(sys.argv[2]).write_text(yaml.safe_dump(plan, sort_keys=False))
 PY
@@ -319,7 +320,7 @@ OPENSTACK_PLAN_CONFIG="$work_dir/storage-plan.yml" \
   ./scripts/prepare-openstack-storage.sh >"$work_dir/storage-dry-run.out"
 grep -q "OPENSTACK_STORAGE_CONFIRM='WIPE-OPENSTACK-DATA:CHECK-DATA:KEEP-CEPH:CHECK-CEPH'" \
   "$work_dir/storage-dry-run.out"
-grep -q 'Future Ceph OSD, unchanged:' "$work_dir/storage-dry-run.out"
+grep -q 'Initial Ceph OSD, unchanged:' "$work_dir/storage-dry-run.out"
 
 if OPENSTACK_CLUSTER_CONFIG="$repo_dir/inventory/openstack-cluster.yml" \
   UBUNTU_OPERATOR_PASSWORD_HASH='$6$placeholder$hash' \
@@ -360,13 +361,22 @@ globals_data = yaml.safe_load(Path("kolla/globals.yml").read_text())
 assert str(globals_data["openstack_release"]) == series
 assert globals_data["enable_horizon"] == "no"
 assert globals_data["enable_skyline"] == "yes"
-assert globals_data["cinder_backend_lvm_name"] == "standard"
-assert globals_data["cinder_volume_group"] == "cinder-ssd"
-assert globals_data["cinder_backends"] == [{"name": "standard", "enabled": True}]
+assert globals_data["enable_cinder_backend_lvm"] == "no"
+assert globals_data["cinder_backend_ceph"] == "yes"
+assert globals_data["glance_backend_ceph"] == "yes"
+assert globals_data["nova_backend_ceph"] == "yes"
+assert globals_data["cinder_backends"] == []
+assert globals_data["cinder_backend_ceph_name"] == "ceph-rbd"
+assert globals_data["cinder_cluster_name"] == "ceph-rbd"
+assert globals_data["ceph_cinder_pool_name"] == "volumes"
+assert globals_data["ceph_glance_pool_name"] == "images"
+assert globals_data["ceph_nova_pool_name"] == "vms"
 terraform_main = Path("terraform/openstack/main.tf").read_text()
 terraform_variables = Path("terraform/openstack/variables.tf").read_text()
-assert 'openstack_blockstorage_volume_type_v3" "fast' not in terraform_main
-assert 'volume_type     = "standard"' in terraform_variables
+assert 'openstack_blockstorage_volume_type_v3" "standard' not in terraform_main
+assert 'openstack_blockstorage_volume_type_v3" "ceph' in terraform_main
+assert 'k8s-01' in terraform_variables and 'k8s-02' in terraform_variables and 'k8s-03' in terraform_variables
+assert 'volume_type' not in terraform_variables
 storage_prepare = Path("scripts/prepare-openstack-storage.sh").read_text()
 assert 'sgdisk --zap-all "$data_disk"' in storage_prepare
 for forbidden in (
@@ -442,6 +452,10 @@ workload_template = Path("terraform/workloads/_template/main.tf").read_text()
 assert 'source   = "../../modules/openstack-vm"' in workload_template
 assert 'for_each = local.enabled_instances' in workload_template
 assert 'name       = "${var.workload_name}-${each.key}"' in workload_template
+assert 'resource "openstack_compute_aggregate_v2" "workload"' in workload_template
+assert 'resource "openstack_compute_flavor_v2" "workload"' in workload_template
+assert '"pci_passthrough:alias"' in Path("terraform/workloads/_template/terraform.tfvars.example").read_text()
+assert workload_template.count("prevent_destroy = true") == 2
 workload_example = Path("terraform/workloads/_template/terraform.tfvars.example").read_text()
 assert re.search(r"(?m)^enable_instances\s*=\s*false$", workload_example)
 for variable in ("network_id", "subnet_id", "image_id", "flavor_id", "instances"):
@@ -461,7 +475,7 @@ assert "workload-plan" in cluster_script and "workload-apply" in cluster_script
 assert "docs/terraform-workloads.md" in Path("README.md").read_text()
 PY
 
-# Validate the checked-in one-node topology without writing generated files.
+# Validate the checked-in fresh three-node topology without writing generated files.
 python3 scripts/render-openstack-cluster.py \
   --config inventory/openstack-cluster.yml \
   --validate-only >/dev/null
@@ -550,6 +564,8 @@ two["nodes"]["cloud03"]["enabled"] = False
 Path(sys.argv[3]).write_text(yaml.safe_dump(two, sort_keys=False))
 
 one_platform = copy.deepcopy(source)
+one_platform["nodes"]["cloud02"]["enabled"] = False
+one_platform["nodes"]["cloud03"]["enabled"] = False
 one_platform["cluster"]["platform"]["magnum_capi"]["enabled"] = True
 Path(sys.argv[4]).write_text(yaml.safe_dump(one_platform, sort_keys=False))
 
@@ -594,9 +610,11 @@ for index in range(4, 8):
         "neutron_external_interface": "mgmt0.10",
         "neutron_external_vlan_id": 10,
         "os_disk_serial": f"CHECK-CLOUD{index:02d}-OS",
-        "require_docker_mount": True,
+        "require_docker_mount": False,
         "roles": ["compute"],
-        "ceph_address": address,
+        "ceph_interface": "ceph0",
+        "ceph_mac": f"02:00:00:00:30:{index:02x}",
+        "ceph_address": f"192.168.30.{index + 2}",
         "ceph_osd_devices": [],
     }
 five = copy.deepcopy(seven)
@@ -617,7 +635,7 @@ if python3 scripts/render-openstack-cluster.py \
   echo 'Two-node topology unexpectedly passed quorum validation.' >&2
   exit 1
 fi
-grep -q 'two enabled nodes do not provide controller quorum' "$work_dir/two-node.stderr"
+grep -q 'first supported deployment requires at least three enabled nodes' "$work_dir/two-node.stderr"
 
 if python3 scripts/render-openstack-cluster.py \
   --config "$work_dir/one-node-platform.yml" \
@@ -625,7 +643,7 @@ if python3 scripts/render-openstack-cluster.py \
   echo 'One-node managed platform unexpectedly passed validation.' >&2
   exit 1
 fi
-grep -q 'managed platform services require at least three enabled physical nodes' \
+grep -q 'first supported deployment requires at least three enabled nodes' \
   "$work_dir/one-platform.stderr"
 
 if python3 scripts/render-openstack-cluster.py \
@@ -721,15 +739,13 @@ assert "all-in-one" not in Path(sys.argv[2]).read_text()
 generated_lines = Path(sys.argv[3]).read_text().splitlines()
 for role in ("control", "network", "compute"):
     assert set(group_hosts(generated_lines, role)) == set(hosts), f"generated Kolla {role} mismatch"
-assert group_hosts(generated_lines, "cinder-volume-multiple:children") == ["storage"]
-assert group_hosts(generated_lines, "cinder-backup-multiple:children") == ["storage"]
 assert "template-control" not in Path(sys.argv[3]).read_text()
 
 globals_data = yaml.safe_load(Path(sys.argv[4]).read_text())
 assert globals_data["kolla_internal_vip_address"] == "192.0.2.10"
 plan = json.loads(Path(sys.argv[5]).read_text())
 assert plan["node_count"] == 3
-assert plan["roles"]["storage"] == ["cloud01"]
+assert plan["roles"]["storage"] == ["cloud01", "cloud02", "cloud03"]
 PY
 
 # Keep 5/7-node physical scaling generic: three controller/network nodes and
@@ -778,7 +794,7 @@ assert set(group_hosts(kolla_lines, "compute")) == all_hosts
 plan = json.loads(Path(sys.argv[3]).read_text())
 assert plan["node_count"] == 7
 assert set(plan["nodes"]) == all_hosts
-assert plan["roles"]["storage"] == ["cloud01"]
+assert plan["roles"]["storage"] == ["cloud01", "cloud02", "cloud03"]
 PY
 
 # Run the Kubespray renderer against deterministic Terraform output fixtures.
@@ -1098,7 +1114,7 @@ fi
 [[ ! -e $credential_repo/.fake-user && ! -e $credential_env ]]
 
 # Exercise the OpenWrt renderer without contacting a router. The fixture binds
-# exact hardware facts to the current one-node topology and verifies the
+# exact hardware facts to the initial three-node topology and verifies the
 # generated transaction contract consumed by the Ansible playbooks.
 openwrt_inventory="$work_dir/openwrt-inventory.yml"
 openwrt_discovery="$work_dir/openwrt-discovery.json"
@@ -1132,6 +1148,11 @@ router["dsa_bridge"] = {
     "provider_tagged_ports": ["lan2"],
 }
 router["networks"]["provider"]["deployed_nodes"] = []
+router["networks"]["provider"]["probe_addresses"] = {
+    "cloud01": "198.51.100.2",
+    "cloud02": "198.51.100.3",
+    "cloud03": "198.51.100.4",
+}
 Path(sys.argv[2]).write_text(yaml.safe_dump(inventory, sort_keys=False))
 
 discovery = {
@@ -1213,6 +1234,7 @@ assert plan["provider"]["probes"]["cloud01"] == {
     "temporary_cidr": "198.51.100.2/24",
     "gateway": "198.51.100.1",
 }
+assert set(plan["provider"]["probes"]) == {"cloud01", "cloud02", "cloud03"}
 assert plan["provider"]["deployed"] == {}
 assert plan["provider"]["deployed_nodes_without_temporary_probe"] == []
 assert plan["management"]["dhcp_dynamic_pool"] == {

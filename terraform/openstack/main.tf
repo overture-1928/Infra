@@ -1,6 +1,5 @@
 locals {
   nodes                   = var.enable_resources ? var.kubernetes_nodes : {}
-  uses_ceph_volume        = anytrue([for node in values(local.nodes) : node.volume_type == "ceph"])
   kubernetes_internal_vip = cidrhost(var.tenant_cidr, var.kubernetes_api_host_number)
   router_external_ip      = cidrhost(var.external_cidr, 2)
 }
@@ -26,16 +25,8 @@ resource "openstack_compute_flavor_v2" "kubernetes" {
   is_public = false
 }
 
-resource "openstack_blockstorage_volume_type_v3" "standard" {
-  count = var.enable_resources ? 1 : 0
-  name  = "standard"
-  extra_specs = {
-    volume_backend_name = "standard"
-  }
-}
-
 resource "openstack_blockstorage_volume_type_v3" "ceph" {
-  count = var.enable_resources && local.uses_ceph_volume ? 1 : 0
+  count = var.enable_resources ? 1 : 0
   name  = "ceph"
   extra_specs = {
     volume_backend_name = "ceph-rbd"
@@ -241,14 +232,11 @@ resource "openstack_networking_port_v2" "kubernetes" {
 }
 
 resource "openstack_blockstorage_volume_v3" "kubernetes" {
-  for_each = local.nodes
-  name     = "${each.key}-root"
-  size     = each.value.volume_size
-  image_id = data.openstack_images_image_v2.ubuntu[0].id
-  volume_type = (
-    each.value.volume_type == "standard" ? openstack_blockstorage_volume_type_v3.standard[0].name :
-    openstack_blockstorage_volume_type_v3.ceph[0].name
-  )
+  for_each    = local.nodes
+  name        = "${each.key}-root"
+  size        = each.value.volume_size
+  image_id    = data.openstack_images_image_v2.ubuntu[0].id
+  volume_type = openstack_blockstorage_volume_type_v3.ceph[0].name
 
   lifecycle {
     prevent_destroy = true

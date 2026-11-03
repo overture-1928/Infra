@@ -57,15 +57,6 @@ for group in primary_groups:
             block.append(line)
     replacements[group] = block
 
-# Kolla's official multinode inventory maps the multi-backend LVM service to
-# both the control and storage groups. Our reviewed topology keeps the local
-# VGs only on storage hosts, so controllers without those VGs must not run
-# cinder-volume or cinder-backup containers.
-globals_data = yaml.safe_load(Path(os.environ["KOLLA_GLOBALS"]).read_text())
-if globals_data.get("enable_cinder_backend_lvm") == "yes":
-    replacements["cinder-volume-multiple:children"] = ["storage"]
-    replacements["cinder-backup-multiple:children"] = ["storage"]
-
 result = []
 i = 0
 while i < len(lines):

@@ -51,12 +51,59 @@ variable "image_id" {
 }
 
 variable "flavor_id" {
-  description = "ID of the existing Nova flavor used by this workload. IDs may be numeric strings or UUIDs."
+  description = "ID of an existing default Nova flavor. Set null when managed_flavor creates it."
   type        = string
+  default     = null
+  nullable    = true
 
   validation {
-    condition     = length(trimspace(var.flavor_id)) > 0
-    error_message = "flavor_id must not be empty."
+    condition     = var.flavor_id == null ? true : length(trimspace(var.flavor_id)) > 0
+    error_message = "flavor_id must be null or non-empty."
+  }
+}
+
+variable "managed_flavor" {
+  description = "Optional private flavor created by this stack, including PCI and aggregate extra specs."
+  type = object({
+    name        = string
+    ram         = number
+    vcpus       = number
+    disk        = number
+    is_public   = optional(bool, false)
+    extra_specs = optional(map(string), {})
+  })
+  default  = null
+  nullable = true
+
+  validation {
+    condition = var.managed_flavor == null ? true : (
+      length(trimspace(var.managed_flavor.name)) > 0 &&
+      var.managed_flavor.ram >= 512 &&
+      var.managed_flavor.vcpus >= 1 &&
+      var.managed_flavor.disk >= 0
+    )
+    error_message = "managed_flavor requires a name, at least 512 MiB RAM, one vCPU and a non-negative disk size."
+  }
+}
+
+variable "host_aggregate" {
+  description = "Optional Nova host aggregate created with the managed flavor, for example cloud01-local."
+  type = object({
+    name     = string
+    zone     = optional(string)
+    hosts    = set(string)
+    metadata = map(string)
+  })
+  default  = null
+  nullable = true
+
+  validation {
+    condition = var.host_aggregate == null ? true : (
+      length(trimspace(var.host_aggregate.name)) > 0 &&
+      length(var.host_aggregate.hosts) > 0 &&
+      length(var.host_aggregate.metadata) > 0
+    )
+    error_message = "host_aggregate requires a name, at least one Nova hostname and metadata."
   }
 }
 

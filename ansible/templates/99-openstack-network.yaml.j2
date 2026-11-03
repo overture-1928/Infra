@@ -17,6 +17,17 @@ network:
 {% for address in management_dns %}
           - {{ address }}
 {% endfor %}
+{% if ceph_interface is defined %}
+    {{ ceph_interface }}:
+      match:
+        macaddress: {{ ceph_mac }}
+      set-name: {{ ceph_interface }}
+      dhcp4: false
+      dhcp6: false
+      addresses:
+        - {{ ceph_address }}/{{ ceph_prefix_length }}
+      link-local: []
+{% endif %}
   vlans:
     {{ neutron_external_interface }}:
       id: {{ neutron_external_vlan_id }}

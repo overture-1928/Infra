@@ -24,7 +24,7 @@ import yaml
 path = Path(sys.argv[1])
 try:
     storage = yaml.safe_load(path.read_text())["storage"]
-    serials = [str(storage["ceph_reserve"]["serial"])]
+    serials = [str(storage["ceph_osd"]["serial"])]
     serials.extend(str(item["serial"]) for item in storage.get("untouched", []))
 except (OSError, KeyError, TypeError, yaml.YAMLError) as exc:
     raise SystemExit(f"cannot read protected disks from {path}: {exc}") from exc

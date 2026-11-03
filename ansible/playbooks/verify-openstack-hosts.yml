@@ -16,7 +16,33 @@
         that:
           - management_interface in ansible_interfaces
           - neutron_external_interface in ansible_interfaces
-        fail_msg: The management or Neutron VLAN interface is missing.
+          - ceph_interface is not defined or ceph_interface in ansible_interfaces
+        fail_msg: A reviewed management, Neutron VLAN or Ceph interface is missing.
+
+    - name: Require the dedicated Ceph address
+      ansible.builtin.assert:
+        that:
+          - ceph_address in ansible_all_ipv4_addresses
+        fail_msg: >-
+          {{ ceph_interface }} must own the reviewed Ceph address {{ ceph_address }}.
+      when: ceph_interface is defined
+
+    - name: Read the negotiated Ceph link speed
+      ansible.builtin.command: "cat /sys/class/net/{{ ceph_interface }}/speed"
+      register: ceph_link_speed
+      changed_when: false
+      failed_when: false
+      when: ceph_interface is defined
+
+    - name: Require the reviewed Ceph link speed
+      ansible.builtin.assert:
+        that:
+          - ceph_link_speed.rc == 0
+          - ceph_link_speed.stdout | int >= ceph_min_link_mbps | int
+        fail_msg: >-
+          {{ ceph_interface }} must negotiate at least {{ ceph_min_link_mbps }} Mb/s;
+          found {{ ceph_link_speed.stdout | default('unknown') }}.
+      when: ceph_interface is defined
 
     - name: Read time synchronization state
       ansible.builtin.command: timedatectl show --property=NTPSynchronized --value
@@ -56,19 +82,6 @@
           - docker_mount.rc == 0
         fail_msg: /var/lib/docker must be a reviewed separate mount before Kolla deployment.
       when: require_docker_mount | bool
-
-    - name: Read local LVM volume groups
-      ansible.builtin.command: vgs --noheadings -o vg_name
-      register: volume_groups
-      changed_when: false
-      when: local_lvm_storage | bool
-
-    - name: Require the reviewed cloud01 Cinder volume group
-      ansible.builtin.assert:
-        that:
-          - "'cinder-ssd' in volume_groups.stdout_lines | map('trim') | list"
-        fail_msg: The reviewed cinder-ssd volume group is required on the LVM storage host.
-      when: local_lvm_storage | bool
 
     - name: Read cluster hostname IPv4 resolution
       ansible.builtin.command: "getent ahostsv4 {{ item.key }}"

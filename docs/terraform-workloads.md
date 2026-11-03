@@ -109,6 +109,8 @@ locking 경계를 바꿀 수 있는 `TF_CLI_ARGS*`, `TF_DATA_DIR`, `TF_REATTACH_
 | --- | --- |
 | `network_id`, `subnet_id`, 공통 `image_id` | 위에서 조회한 OpenStack UUID |
 | 공통·인스턴스별 `flavor_id` | Nova flavor ID. 환경에 따라 `1` 같은 숫자 문자열 또는 UUID |
+| `managed_flavor` | stack이 private flavor를 직접 만들 때 사용. 이 경우 공통 `flavor_id = null` |
+| `host_aggregate` | 특정 compute 고정이 필요할 때 Nova hostname, aggregate metadata를 지정 |
 | 인스턴스별 `image_id` | 공통값과 다를 때만 지정하는 Glance image UUID |
 | `additional_security_group_ids`, `floating_ip_subnet_id`, `server_group_id` | 사용할 때만 지정하는 OpenStack UUID |
 | `cloud_name` | `clouds.yaml`의 cloud 항목 이름 |
@@ -118,6 +120,10 @@ locking 경계를 바꿀 수 있는 `TF_CLI_ARGS*`, `TF_DATA_DIR`, `TF_REATTACH_
 | `root_volume_size` | 필수 boot volume 크기(GiB 단위 양의 정수) |
 | `associate_floating_ip` | 해당 VM에 Floating IP가 필요할 때만 `true`; 이때 `floating_ip_pool` 필수 |
 | `config_drive`, `metadata` | 인스턴스별 config drive 사용 여부와 비밀이 없는 metadata |
+
+일반 VM은 기존 `flavor_id`를 사용한다. PCI 패스스루처럼 stack 전용 extra spec이 필요할 때만
+`managed_flavor`와 `host_aggregate`를 함께 사용한다. 두 resource에도 `prevent_destroy`가
+적용되며, aggregate의 host 이름은 Nova hypervisor 목록과 정확히 같아야 한다.
 
 `terraform/workloads/web/terraform.tfvars`에서 cloud 이름, 위 UUID, 허용 CIDR과
 `instances` map을 실제 값으로 바꾼다. 처음에는 반드시 다음 안전 스위치를 유지한다.

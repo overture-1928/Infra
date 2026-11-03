@@ -103,12 +103,12 @@ def validate(config: dict) -> tuple[dict, dict[str, dict], dict[str, list[str]],
     if not isinstance(cluster, dict):
         fail("cluster must be a mapping")
     nodes = enabled_nodes(config)
-    if len(nodes) == 2:
-        fail("two enabled nodes do not provide controller quorum; use one node or at least three")
+    if len(nodes) < 3:
+        fail("the first supported deployment requires at least three enabled nodes")
 
     backend = cluster.get("storage_backend")
-    if backend not in {"lvm", "ceph"}:
-        fail("cluster.storage_backend must be lvm or ceph")
+    if backend != "ceph":
+        fail("cluster.storage_backend must be ceph for the fresh three-node deployment")
     try:
         vip = ipaddress.ip_address(cluster["api_vip"])
     except (KeyError, ValueError) as exc:
@@ -183,15 +183,10 @@ def validate(config: dict) -> tuple[dict, dict[str, dict], dict[str, list[str]],
             fail(f"at least one enabled node must have the {role} role")
         role_hosts[role].sort()
     controls = len(role_hosts["control"])
-    if controls != 1 and (controls < 3 or controls % 2 == 0):
-        fail("control role count must be one or an odd number of at least three")
-    if len(nodes) >= 3 and controls < 3:
-        fail("a three-or-more-node topology requires at least three controllers")
-    if len(nodes) >= 3 and len(role_hosts["network"]) < 3:
-        fail("a three-or-more-node topology requires at least three network nodes")
-    if backend == "lvm" and role_hosts["storage"] != ["cloud01"]:
-        fail("the reviewed LVM topology permits only cloud01 in the storage group")
-
+    if controls < 3 or controls % 2 == 0:
+        fail("control role count must be an odd number of at least three")
+    if len(role_hosts["network"]) < 3:
+        fail("the topology requires at least three network nodes")
     ceph = cluster.get("ceph", {})
     if backend == "ceph":
         if ceph.get("enabled") is not True:
@@ -201,6 +196,46 @@ def validate(config: dict) -> tuple[dict, dict[str, dict], dict[str, list[str]],
             fail(
                 "cluster.ceph.openstack_pool_device_class must be hdd, ssd or nvme"
             )
+        try:
+            ceph_public_network = ipaddress.ip_network(ceph["public_network"], strict=True)
+        except (KeyError, ValueError) as exc:
+            fail(f"cluster.ceph.public_network is invalid: {exc}")
+        try:
+            ceph_min_link_mbps = int(ceph.get("min_link_mbps", 10000))
+        except (TypeError, ValueError):
+            fail("cluster.ceph.min_link_mbps must be a positive integer")
+        if ceph_min_link_mbps <= 0:
+            fail("cluster.ceph.min_link_mbps must be a positive integer")
+        ceph_addresses: set[ipaddress._BaseAddress] = set()
+        for name, node in nodes.items():
+            for field in ("ceph_interface", "ceph_mac", "ceph_address"):
+                if not node.get(field):
+                    fail(f"{name}.{field} is required for the Ceph topology")
+            if node["ceph_interface"] in {
+                node["management_interface"],
+                node["neutron_external_interface"],
+            }:
+                fail(f"{name}.ceph_interface must be a dedicated interface name")
+            ceph_mac = str(node["ceph_mac"]).lower()
+            if not MAC_RE.fullmatch(ceph_mac):
+                fail(f"{name}.ceph_mac is invalid")
+            if ceph_mac in macs:
+                fail(f"duplicate cluster MAC: {ceph_mac}")
+            macs.add(ceph_mac)
+            try:
+                ceph_address = ipaddress.ip_address(node["ceph_address"])
+            except ValueError as exc:
+                fail(f"{name}.ceph_address is invalid: {exc}")
+            if ceph_address not in ceph_public_network:
+                fail(f"{name}.ceph_address is outside cluster.ceph.public_network")
+            if ceph_address in {
+                ceph_public_network.network_address,
+                ceph_public_network.broadcast_address,
+            }:
+                fail(f"{name}.ceph_address must be a usable host address")
+            if ceph_address in ceph_addresses:
+                fail(f"duplicate Ceph address: {ceph_address}")
+            ceph_addresses.add(ceph_address)
         osd_hosts = [name for name, node in nodes.items() if node.get("ceph_osd_devices")]
         if len(osd_hosts) < 3:
             fail("Ceph requires explicit OSD devices on at least three enabled nodes")
@@ -236,8 +271,6 @@ def validate(config: dict) -> tuple[dict, dict[str, dict], dict[str, list[str]],
             )
         if ceph.get("bootstrap_host") not in nodes:
             fail("Ceph bootstrap_host must be enabled")
-    elif ceph.get("enabled") is True:
-        fail("set storage_backend=ceph before enabling Ceph")
     platform = validate_platform(cluster, len(nodes))
     return cluster, nodes, role_hosts, platform
 
@@ -290,9 +323,19 @@ def render_ansible(cluster: dict, nodes: dict[str, dict], role_hosts: dict[str, 
             "openstack_api_vip": cluster["api_vip"],
             "timezone": cluster["timezone"],
             "require_docker_mount": node.get("require_docker_mount", True),
-            "local_lvm_storage": cluster["storage_backend"] == "lvm" and name in role_hosts["storage"],
             "ceph_osd_devices": node.get("ceph_osd_devices", []),
         }
+        if cluster["storage_backend"] == "ceph":
+            ceph_network = ipaddress.ip_network(cluster["ceph"]["public_network"], strict=True)
+            values.update(
+                {
+                    "ceph_interface": node["ceph_interface"],
+                    "ceph_mac": node["ceph_mac"],
+                    "ceph_address": node["ceph_address"],
+                    "ceph_prefix_length": ceph_network.prefixlen,
+                    "ceph_min_link_mbps": int(cluster["ceph"].get("min_link_mbps", 10000)),
+                }
+            )
         if node.get("connection", "ssh") == "local":
             values["ansible_connection"] = "local"
         else:
@@ -328,16 +371,14 @@ def render_globals(base: dict, cluster: dict, platform: dict) -> dict:
                 "glance_backend_ceph": "yes",
                 "nova_backend_ceph": "yes",
                 "cinder_backends": [],
-                "cinder_ceph_backends": [
-                    {
-                        "name": "ceph-rbd",
-                        "backend_name": "ceph-rbd",
-                        "cluster": "ceph",
-                        "user": "cinder",
-                        "pool": "volumes",
-                        "enabled": True,
-                    }
-                ],
+                "cinder_backend_ceph_name": "ceph-rbd",
+                "cinder_cluster_name": "ceph-rbd",
+                "ceph_cinder_user": "cinder",
+                "ceph_cinder_pool_name": "volumes",
+                "ceph_glance_user": "glance",
+                "ceph_glance_pool_name": "images",
+                "ceph_nova_user": "cinder",
+                "ceph_nova_pool_name": "vms",
             }
         )
     if platform["magnum_capi"]["enabled"]:
@@ -361,6 +402,7 @@ def render_ceph_plan(cluster: dict, nodes: dict[str, dict]) -> dict:
         "bootstrap_host": ceph.get("bootstrap_host", "cloud01"),
         "public_network": ceph.get("public_network", ""),
         "cluster_network": ceph.get("cluster_network", ""),
+        "min_link_mbps": ceph.get("min_link_mbps", 10000),
         "osd_memory_target_ratio": ceph.get("osd_memory_target_ratio", 0.2),
         "openstack_pool_device_class": ceph.get("openstack_pool_device_class", ""),
         "hosts": {

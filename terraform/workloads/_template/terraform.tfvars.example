@@ -9,6 +9,24 @@ subnet_id  = "00000000-0000-4000-8000-000000000002"
 image_id   = "00000000-0000-4000-8000-000000000003"
 flavor_id  = "1"
 
+# For the cloud01 HBA storage VM, set flavor_id = null and enable both blocks.
+# managed_flavor = {
+#   name      = "storage.hba"
+#   ram       = 8192
+#   vcpus     = 4
+#   disk      = 0
+#   is_public = false
+#   extra_specs = {
+#     "pci_passthrough:alias"                         = "storage-hba:1"
+#     "aggregate_instance_extra_specs:local_storage" = "true"
+#   }
+# }
+# host_aggregate = {
+#   name     = "cloud01-local"
+#   hosts    = ["cloud01"]
+#   metadata = { local_storage = "true" }
+# }
+
 # RFC 5737 documentation ranges are intentionally non-production examples.
 ssh_ingress_cidr      = "192.0.2.0/24"
 internal_ingress_cidr = "203.0.113.0/24"

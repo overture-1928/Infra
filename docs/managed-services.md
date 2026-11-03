@@ -1,7 +1,7 @@
 # Magnum CAPI 관리형 서비스
 
-현재 단일 노드에서는 모든 관리형 서비스 플래그를 끈다. `platform-services.sh`는 물리 노드
-3대, 세 OSD 호스트의 정상 Ceph, Ready 상태인 management Kubernetes control plane 3대가
+최초 3노드 OpenStack을 검증할 때까지 모든 관리형 서비스 플래그를 끈다.
+`platform-services.sh`는 물리 노드 3대, 세 OSD 호스트의 정상 Ceph, Ready 상태인 management Kubernetes control plane 3대가
 확인되기 전에는 Kubernetes와 OpenStack을 변경하지 않는다. Management cluster에는 동적
 프로비저닝을 지원하는 비로컬 기본 StorageClass도 정확히 하나 있어야 한다.
 Application credential, kubeconfig와 Terraform 상태의 보관·백업 기준은
@@ -215,8 +215,8 @@ Magnum 상태에 원인이 남으며, 사용자는 같은 cluster UUID를 통해
 
 ## 3노드 이후 활성화 순서
 
-기존 LVM 데이터를 Ceph로 옮기고 복구 시험까지 끝낸 뒤 로컬 topology에서 다음 값만 먼저
-활성화한다.
+최초 3노드 Ceph/OpenStack과 management Kubernetes의 복구 시험까지 끝낸 뒤 로컬
+topology에서 다음 값만 활성화한다.
 
 ```yaml
 cluster:

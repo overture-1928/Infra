@@ -15,7 +15,12 @@ variable file and review the first plan while `enable_instances = false`. Set th
 only when the resulting create plan is ready. Follow `docs/terraform-workloads.md` for the full
 workflow.
 
-The VM and boot volume use `prevent_destroy`, and the boot volume sets
+The root can optionally own one private Nova flavor and one host aggregate. This is intended for
+host-pinned PCI passthrough workloads such as the cloud01 storage HBA VM. Set the common
+`flavor_id` to null, configure both `managed_flavor` and `host_aggregate`, and keep their metadata
+key aligned. Existing-flavor workloads leave both optional objects null.
+
+The VM, boot volume, managed flavor and host aggregate use `prevent_destroy`, and the boot volume sets
 `delete_on_termination = false`. Removing an instance key or requesting replacement of either
 resource therefore fails instead of deleting them. Ports, security groups and Floating IPs do not
 have that lifecycle guard and must be checked separately in every plan. Automated decommissioning

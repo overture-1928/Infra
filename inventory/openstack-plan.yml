@@ -17,7 +17,7 @@ host:
 
 openstack:
   series: "2026.2"
-  deployment: single-node-on-multinode-inventory
+  deployment: fresh-three-node-ceph
   api_vip: "192.0.2.10"
   external_interface: mgmt0.10
   external_vlan: 10
@@ -41,14 +41,13 @@ storage:
       remainder: free space in ubuntu-vg for later extension
   openstack_data:
     serial: EXAMPLE-DATA-SSD-0001
-    docker_partition: 256GiB
-    cinder_volume_group: cinder-ssd
-    cinder_type: standard
-  ceph_reserve:
+    docker_partition: full-disk
+    description: cloud01 1TB SSD dedicated to Kolla container data
+  ceph_osd:
     serial: EXAMPLE-CEPH-NVME-0001
     min_size_bytes: 1800000000000
     device_class: nvme
-    description: 2TB NVMe reserved as the cloud01 Ceph OSD; never initialize during the one-node LVM phase
+    description: cloud01 2TB NVMe used as one of the initial three Ceph OSDs
   untouched:
     - serial: EXAMPLE-RESERVED-SSD-0001
       description: 512GB SSD reserved for later use
@@ -58,10 +57,9 @@ storage:
       description: 3TB HDD reserved for later use
 
 kubernetes:
-  initial_nodes: 1
+  initial_nodes: 3
   tenant_addresses:
     - "203.0.113.11"
-  api_vip: "203.0.113.10"
-  expansion_nodes:
     - "203.0.113.12"
     - "203.0.113.13"
+  api_vip: "203.0.113.10"

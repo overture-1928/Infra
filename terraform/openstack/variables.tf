@@ -100,7 +100,6 @@ variable "kubernetes_nodes" {
     fixed_ip        = string
     floating_ip     = string
     volume_size     = number
-    volume_type     = string
     roles           = set(string)
     inventory_order = number
   }))
@@ -109,15 +108,28 @@ variable "kubernetes_nodes" {
       fixed_ip        = "203.0.113.11"
       floating_ip     = "198.51.100.50"
       volume_size     = 120
-      volume_type     = "standard"
       roles           = ["control_plane", "etcd", "worker"]
       inventory_order = 10
+    }
+    k8s-02 = {
+      fixed_ip        = "203.0.113.12"
+      floating_ip     = "198.51.100.51"
+      volume_size     = 120
+      roles           = ["control_plane", "etcd", "worker"]
+      inventory_order = 20
+    }
+    k8s-03 = {
+      fixed_ip        = "203.0.113.13"
+      floating_ip     = "198.51.100.52"
+      volume_size     = 120
+      roles           = ["control_plane", "etcd", "worker"]
+      inventory_order = 30
     }
   }
 
   validation {
-    condition     = alltrue([for node in values(var.kubernetes_nodes) : contains(["standard", "ceph"], node.volume_type)])
-    error_message = "Every Kubernetes node volume_type must be standard or ceph."
+    condition     = length(var.kubernetes_nodes) >= 3
+    error_message = "The initial management Kubernetes cluster requires at least three nodes."
   }
 
   validation {

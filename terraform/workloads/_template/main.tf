@@ -1,5 +1,58 @@
 locals {
   enabled_instances = var.enable_instances ? var.instances : {}
+  default_flavor_id = var.managed_flavor == null ? var.flavor_id : try(openstack_compute_flavor_v2.workload[0].id, null)
+}
+
+check "flavor_source" {
+  assert {
+    condition = (
+      !var.enable_instances ||
+      var.managed_flavor != null ||
+      var.flavor_id != null ||
+      alltrue([for instance in values(var.instances) : instance.flavor_id != null])
+    )
+    error_message = "Set flavor_id, managed_flavor, or a flavor_id override on every enabled instance."
+  }
+
+  assert {
+    condition     = var.managed_flavor == null || var.flavor_id == null
+    error_message = "Set only one default flavor source: flavor_id or managed_flavor."
+  }
+
+  assert {
+    condition     = var.host_aggregate == null || var.managed_flavor != null
+    error_message = "host_aggregate is supported together with managed_flavor."
+  }
+}
+
+resource "openstack_compute_aggregate_v2" "workload" {
+  count = var.enable_instances && var.host_aggregate != null ? 1 : 0
+
+  name     = var.host_aggregate.name
+  zone     = var.host_aggregate.zone
+  hosts    = sort(tolist(var.host_aggregate.hosts))
+  metadata = var.host_aggregate.metadata
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "openstack_compute_flavor_v2" "workload" {
+  count = var.enable_instances && var.managed_flavor != null ? 1 : 0
+
+  name        = var.managed_flavor.name
+  ram         = var.managed_flavor.ram
+  vcpus       = var.managed_flavor.vcpus
+  disk        = var.managed_flavor.disk
+  is_public   = var.managed_flavor.is_public
+  extra_specs = var.managed_flavor.extra_specs
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [openstack_compute_aggregate_v2.workload]
 }
 
 resource "openstack_networking_secgroup_v2" "workload" {
@@ -50,7 +103,7 @@ module "instance" {
   network_id = var.network_id
   subnet_id  = var.subnet_id
   image_id   = each.value.image_id == null ? var.image_id : each.value.image_id
-  flavor_id  = each.value.flavor_id == null ? var.flavor_id : each.value.flavor_id
+  flavor_id  = each.value.flavor_id == null ? local.default_flavor_id : each.value.flavor_id
   security_group_ids = setunion(
     var.additional_security_group_ids,
     toset([openstack_networking_secgroup_v2.workload[0].id]),

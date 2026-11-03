@@ -8,10 +8,9 @@ cluster:
   api_vip: 192.0.2.10
   timezone: Asia/Seoul
   ssh_private_key: /home/operator/.ssh/id_ed25519
-  storage_backend: lvm
-  # Managed services stay disabled on the initial one-node cloud. After cloud02
-  # and cloud03 are enabled and storage_backend is changed to ceph, set the
-  # required service flag to true and rerender the topology.
+  storage_backend: ceph
+  # The first supported deployment is the complete three-node cloud. Managed
+  # services remain an explicit later step after OpenStack and Ceph validation.
   platform:
     magnum_capi:
       enabled: false
@@ -22,11 +21,12 @@ cluster:
       # container API backed by a dedicated Kubernetes runtime cluster.
       provider: kubernetes
   ceph:
-    enabled: false
+    enabled: true
     bootstrap_host: cloud01
-    # Dedicated 10Gbps storage network used after cloud02 and cloud03 join.
+    # Dedicated 10Gbps storage network present before the first deployment.
     public_network: 192.168.30.0/24
     cluster_network: ""
+    min_link_mbps: 10000
     osd_memory_target_ratio: 0.2
     # images/volumes/vms are pinned to one CRUSH device class. Other classes
     # may exist, but need separate pools and Cinder volume types to be used.
@@ -55,58 +55,71 @@ nodes:
       - compute
       - monitoring
       - storage
+    ceph_interface: ceph0
+    ceph_mac: 02:00:00:00:30:01
     ceph_address: 192.168.30.2
-    # Add only after the same-class OSD exists on at least three hosts:
-    # ceph_osd_devices:
-    #   - by_id: /dev/disk/by-id/nvme-REPLACE
-    #     serial: REPLACE
-    #     min_size_bytes: 1800000000000
-    #     device_class: nvme
-    ceph_osd_devices: []
+    ceph_osd_devices:
+      - by_id: /dev/disk/by-id/nvme-EXAMPLE-CLOUD01-CEPH
+        serial: EXAMPLE-CLOUD01-CEPH-NVME
+        min_size_bytes: 1800000000000
+        device_class: nvme
 
-  # Enable cloud02 and cloud03 together after replacing every REPLACE value.
-  # With the LVM backend, cloud01 remains the only storage host. This expands
-  # the control and compute planes but does not replicate Cinder or Glance data.
+  # All three nodes are required before the first deployment. Replace every
+  # example hardware identity in the ignored local copy.
   cloud02:
-    enabled: false
+    enabled: true
     connection: ssh
     ansible_host: 192.0.2.4
     ansible_user: operator
     management_interface: mgmt0
-    management_mac: REPLACE_CLOUD02_MAC
+    management_mac: 02:00:00:00:00:02
     management_address: 192.0.2.4/24
     management_gateway: 192.0.2.1
     management_dns:
       - 192.0.2.1
     neutron_external_interface: mgmt0.10
     neutron_external_vlan_id: 10
-    os_disk_serial: REPLACE_CLOUD02_OS_DISK_SERIAL
-    require_docker_mount: true
+    os_disk_serial: EXAMPLE-CLOUD02-OS-SSD
+    require_docker_mount: false
     roles:
       - control
       - network
       - compute
+      - storage
+    ceph_interface: ceph0
+    ceph_mac: 02:00:00:00:30:02
     ceph_address: 192.168.30.4
-    ceph_osd_devices: []
+    ceph_osd_devices:
+      - by_id: /dev/disk/by-id/nvme-EXAMPLE-CLOUD02-CEPH
+        serial: EXAMPLE-CLOUD02-CEPH-NVME
+        min_size_bytes: 1800000000000
+        device_class: nvme
 
   cloud03:
-    enabled: false
+    enabled: true
     connection: ssh
     ansible_host: 192.0.2.5
     ansible_user: operator
     management_interface: mgmt0
-    management_mac: REPLACE_CLOUD03_MAC
+    management_mac: 02:00:00:00:00:03
     management_address: 192.0.2.5/24
     management_gateway: 192.0.2.1
     management_dns:
       - 192.0.2.1
     neutron_external_interface: mgmt0.10
     neutron_external_vlan_id: 10
-    os_disk_serial: REPLACE_CLOUD03_OS_DISK_SERIAL
-    require_docker_mount: true
+    os_disk_serial: EXAMPLE-CLOUD03-OS-SSD
+    require_docker_mount: false
     roles:
       - control
       - network
       - compute
+      - storage
+    ceph_interface: ceph0
+    ceph_mac: 02:00:00:00:30:03
     ceph_address: 192.168.30.5
-    ceph_osd_devices: []
+    ceph_osd_devices:
+      - by_id: /dev/disk/by-id/nvme-EXAMPLE-CLOUD03-CEPH
+        serial: EXAMPLE-CLOUD03-CEPH-NVME
+        min_size_bytes: 1800000000000
+        device_class: nvme

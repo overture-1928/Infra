@@ -1,0 +1,20 @@
+---
+# Static public syntax-check inventory. Runtime commands use the ignored local
+# topology rendered into .cache/cluster/ansible-inventory.yml.
+all:
+  hosts:
+    cloud01:
+      ansible_connection: local
+      ansible_host: 192.0.2.2
+    cloud02:
+      ansible_host: 192.0.2.4
+      ansible_user: operator
+    cloud03:
+      ansible_host: 192.0.2.5
+      ansible_user: operator
+  children:
+    openstack_hosts:
+      hosts:
+        cloud01:
+        cloud02:
+        cloud03:

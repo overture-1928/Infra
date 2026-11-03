@@ -73,6 +73,7 @@ ubuntu-autoinstall/generated/
 kolla/generated/
 kolla/inventory/multinode.local
 kolla/config/nova/nova-compute.conf
+kolla/config/nova.conf
 terraform/openstack/clouds.yaml
 terraform/openstack/generated/
 .cache/

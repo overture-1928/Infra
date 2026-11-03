@@ -18,12 +18,12 @@ Git에서 제외되는 로컬 입력 파일과 자동 생성되는 비밀 파일
 | 로컬 파일 | 기준 파일 | 기록할 내용 |
 | --- | --- | --- |
 | `inventory/openstack-cluster.local.yml` | `inventory/openstack-cluster.yml` | 실제 관리 IP와 API VIP, DNS, NIC·MAC, OS 디스크 시리얼, 노드 역할, SSH 개인키 **경로**, Ceph 주소와 OSD `by-id`·시리얼 |
-| `inventory/openstack-plan.local.yml` | `inventory/openstack-plan.yml` | 실제 관리·Provider·tenant 망, Floating IP 범위, 초기화 대상과 보호 대상 디스크 시리얼, 파티션과 VG 계획 |
+| `inventory/openstack-plan.local.yml` | `inventory/openstack-plan.yml` | 실제 관리·Provider·tenant 망, Floating IP 범위, Kolla SSD와 보호 대상 디스크 시리얼 |
 | `inventory/openwrt-router.local.yml` | `inventory/openwrt-router.example.yml` | OpenWrt 주소와 계정, SSH 키 **경로**, discovery에서 확인한 모델·버전·DSA bridge·포트, 실제 VLAN과 망 계획 |
 | `terraform/openstack/terraform.tfvars` | `terraform/openstack/terraform.tfvars.example` | 실제 Provider·tenant·관리망, gateway·DNS·Floating IP 범위, SSH 공개키, Kubernetes VM 주소·역할·볼륨 |
 | `terraform/workloads/<stack>/terraform.tfvars` | `terraform/workloads/_template/terraform.tfvars.example` | 서비스 VM의 OpenStack UUID, 허용 CIDR, `instances` map과 선택적 Floating IP 설정 |
-| `inventory/openstack-cluster.ceph.local.yml` | `inventory/openstack-cluster.local.yml` | Ceph 전환 때 실제 3노드 값에서 분기해 사용하는 OSD 토폴로지. 운영 LVM 입력과 분리 |
-| `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | GPU/HBA 패스스루를 사용할 때 확인한 PCI vendor/product ID와 alias |
+| `kolla/config/nova/nova-compute.conf` | `kolla/config/nova/nova-compute.conf.example` | cloud01 HBA의 정확한 PCI 주소, vendor/product ID와 alias |
+| `kolla/config/nova.conf` | `kolla/config/nova.conf.example` | nova-api와 compute가 공유할 `storage-hba` alias |
 
 처음 네 파일은 다음처럼 기존 파일을 덮어쓰지 않고 만든다.
 
@@ -50,12 +50,13 @@ GPU 또는 HBA 패스스루를 사용할 때만 Nova 로컬 설정도 같은 방
 umask 077
 test -e kolla/config/nova/nova-compute.conf || \
   cp kolla/config/nova/nova-compute.conf.example kolla/config/nova/nova-compute.conf
-chmod 0600 kolla/config/nova/nova-compute.conf
+test -e kolla/config/nova.conf || \
+  cp kolla/config/nova.conf.example kolla/config/nova.conf
+chmod 0600 kolla/config/nova/nova-compute.conf kolla/config/nova.conf
 ```
 
-Ceph 전용 파일은 공개 예시가 아니라 실제 3노드 값이 검토된
-`inventory/openstack-cluster.local.yml`에서 분기한다. 생성 시점과 명령은
-[Ceph 전환](ceph-transition.md)을 따른다.
+Ceph도 동일한 3노드 `inventory/openstack-cluster.local.yml`을 사용한다. 별도의 전환
+topology는 만들지 않는다. 입력 절차는 [Ceph 최초 구축](ceph-transition.md)을 따른다.
 
 `openstack-cluster.local.yml`과 `openstack-plan.local.yml`의 실제 망과 디스크 역할은 서로
 일치해야 한다. `openwrt-router.local.yml`은 discovery 결과를 확인하기 전까지
@@ -161,7 +162,6 @@ git init -b main
 make check
 git check-ignore -v \
   inventory/openstack-cluster.local.yml \
-  inventory/openstack-cluster.ceph.local.yml \
   inventory/openstack-plan.local.yml \
   inventory/openwrt-router.local.yml \
   terraform/openstack/terraform.tfvars \
@@ -169,6 +169,7 @@ git check-ignore -v \
   terraform/workloads/example/terraform.tfstate \
   terraform/openstack/clouds.yaml \
   kolla/config/nova/nova-compute.conf \
+  kolla/config/nova.conf \
   secure.yaml \
   kolla/generated/passwords.yml
 git add --all
@@ -185,7 +186,7 @@ credential이 원격 저장소에 한 번이라도 올라갔다면 Git에서 삭
 해당 비밀번호, token 또는 key를 폐기하고 교체한다.
 
 세부 생성 순서는 [OpenStack 설치 런북](openstack-runbook.md), OpenWrt 입력은
-[OpenWrt Provider VLAN 자동화](openwrt-router.md), Ceph 전환 입력과 keyring은
-[Ceph 전환](ceph-transition.md), management credential과 kubeconfig는
+[OpenWrt Provider VLAN 자동화](openwrt-router.md), Ceph 입력과 keyring은
+[Ceph 최초 구축](ceph-transition.md), management credential과 kubeconfig는
 [Magnum CAPI 관리형 서비스](managed-services.md), 일반 VM의 독립 state는
 [서비스별 OpenStack VM Terraform 스택](terraform-workloads.md)을 따른다.

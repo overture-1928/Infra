@@ -25,13 +25,11 @@ kubernetes_api_host_number = 10
 # The tenant router reserves host .2 of external_cidr for its provider gateway
 # port. Floating IPs start at .50 and must not use this address.
 
-# Start with k8s-01. Add k8s-02 and k8s-03 together after three physical OpenStack compute hosts
-# are available. Keep the existing k8s-01 boot volume on standard; changing its
-# type would request a replacement that prevent_destroy intentionally blocks.
-# New nodes use Ceph, and Cinder CSI provides Ceph-backed workload storage.
-# Control-plane VMs use strict physical-host anti-affinity.
+# Create all three management Kubernetes nodes only after the three physical
+# OpenStack hosts and Ceph are healthy. Every root volume uses the ceph type,
+# and strict anti-affinity places the control-plane VMs on different hosts.
 kubernetes_nodes = {
-  k8s-01 = { fixed_ip = "203.0.113.11", floating_ip = "198.51.100.50", volume_size = 120, volume_type = "standard", roles = ["control_plane", "etcd", "worker"], inventory_order = 10 }
-#   k8s-02 = { fixed_ip = "203.0.113.12", floating_ip = "198.51.100.51", volume_size = 120, volume_type = "ceph", roles = ["control_plane", "etcd", "worker"], inventory_order = 20 }
-#   k8s-03 = { fixed_ip = "203.0.113.13", floating_ip = "198.51.100.52", volume_size = 120, volume_type = "ceph", roles = ["control_plane", "etcd", "worker"], inventory_order = 30 }
+  k8s-01 = { fixed_ip = "203.0.113.11", floating_ip = "198.51.100.50", volume_size = 120, roles = ["control_plane", "etcd", "worker"], inventory_order = 10 }
+  k8s-02 = { fixed_ip = "203.0.113.12", floating_ip = "198.51.100.51", volume_size = 120, roles = ["control_plane", "etcd", "worker"], inventory_order = 20 }
+  k8s-03 = { fixed_ip = "203.0.113.13", floating_ip = "198.51.100.52", volume_size = 120, roles = ["control_plane", "etcd", "worker"], inventory_order = 30 }
 }

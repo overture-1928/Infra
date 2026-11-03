@@ -1,5 +1,10 @@
-# Copy to kolla/config/nova/nova-compute.conf only after checking lspci and IOMMU groups.
-# Replace vendor_id and product_id with the exact GPU or HBA identifiers.
+# Copy to kolla/config/nova/nova-compute.conf only after cloud01 is installed
+# and the dedicated HBA's PCI address and IOMMU group have been checked.
 [pci]
-device_spec = {"vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT"}
-alias = {"vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT","device_type":"type-PCI","name":"passthrough-device"}
+device_spec = {"address":"0000:REPLACE_ADDRESS","vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT"}
+alias = {"vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT","device_type":"type-PCI","name":"storage-hba"}
+
+# Add a separately verified GPU when needed. Keep its address, IDs and alias
+# distinct from the storage HBA.
+# device_spec = {"address":"0000:REPLACE_GPU_ADDRESS","vendor_id":"REPLACE_GPU_VENDOR","product_id":"REPLACE_GPU_PRODUCT"}
+# alias = {"vendor_id":"REPLACE_GPU_VENDOR","product_id":"REPLACE_GPU_PRODUCT","device_type":"type-PCI","name":"gpu"}

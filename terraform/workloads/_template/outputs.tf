@@ -3,6 +3,16 @@ output "security_group_id" {
   value       = try(openstack_networking_secgroup_v2.workload[0].id, null)
 }
 
+output "managed_flavor_id" {
+  description = "Workload-owned Nova flavor ID, or null when an existing flavor is used."
+  value       = try(openstack_compute_flavor_v2.workload[0].id, null)
+}
+
+output "host_aggregate_id" {
+  description = "Workload-owned Nova host aggregate ID, or null when none is configured."
+  value       = try(openstack_compute_aggregate_v2.workload[0].id, null)
+}
+
 output "instances" {
   description = "Stable identifiers and addresses for workload instances."
   value = {
