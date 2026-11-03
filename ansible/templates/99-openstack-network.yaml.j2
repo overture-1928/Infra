@@ -1,0 +1,26 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {{ management_interface }}:
+      match:
+        macaddress: {{ management_mac }}
+      set-name: {{ management_interface }}
+      dhcp4: false
+      addresses:
+        - {{ management_address }}
+      routes:
+        - to: default
+          via: {{ management_gateway }}
+      nameservers:
+        addresses:
+{% for address in management_dns %}
+          - {{ address }}
+{% endfor %}
+  vlans:
+    {{ neutron_external_interface }}:
+      id: {{ neutron_external_vlan_id }}
+      link: {{ management_interface }}
+      dhcp4: false
+      dhcp6: false
+      link-local: []

@@ -1,0 +1,127 @@
+---
+- name: Verify the OpenWrt provider gateway path from every OpenStack host
+  hosts: openstack_hosts
+  become: true
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
+  pre_tasks:
+    - name: Load the reviewed router plan on the controller
+      ansible.builtin.set_fact:
+        openwrt_plan: "{{ lookup('ansible.builtin.file', openwrt_plan_path) | from_json }}"
+      no_log: true
+
+    - name: Select this host's provider verification mode
+      ansible.builtin.set_fact:
+        openwrt_provider_probe: "{{ openwrt_plan.provider.probes[inventory_hostname] | default({}) }}"
+        openwrt_provider_deployed: "{{ openwrt_plan.provider.deployed[inventory_hostname] | default({}) }}"
+        openwrt_provider_address_added: false
+
+    - name: Require exactly one provider verification mode for this host
+      ansible.builtin.assert:
+        that:
+          - (openwrt_provider_probe | length > 0) != (openwrt_provider_deployed | length > 0)
+        fail_msg: >-
+          {{ inventory_hostname }} must appear in exactly one of provider.probes or
+          provider.deployed.
+
+    - name: Validate a fresh-node provider probe
+      ansible.builtin.assert:
+        that:
+          - openwrt_provider_probe.interface | default('') is match('^[A-Za-z0-9_.:-]{1,31}$')
+          - openwrt_provider_probe.temporary_cidr | default('') is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}/(3[0-2]|[12]?[0-9])$')
+          - openwrt_provider_probe.gateway | default('') is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+        fail_msg: "provider.probes.{{ inventory_hostname }} is missing or invalid."
+      when: openwrt_provider_probe | length > 0
+
+    - name: Validate a deployed-node provider check
+      ansible.builtin.assert:
+        that:
+          - openwrt_provider_deployed.interface | default('') is match('^[A-Za-z0-9_.:-]{1,31}$')
+        fail_msg: "provider.deployed.{{ inventory_hostname }} is missing or invalid."
+      when: openwrt_provider_deployed | length > 0
+
+  tasks:
+    - name: Verify deployed external interface membership in br-ex without changing it
+      ansible.builtin.raw: |
+        set -eu
+        interface={{ openwrt_provider_deployed.interface | quote }}
+        ip link show dev "${interface}" >/dev/null
+        ip link show dev br-ex >/dev/null
+        if ip -4 -o address show dev "${interface}" | grep -q .; then
+          echo 'The deployed provider interface has an unexpected host IPv4 address.' >&2
+          exit 1
+        fi
+        bridge=''
+        if command -v ovs-vsctl >/dev/null 2>&1; then
+          bridge="$(ovs-vsctl --timeout=10 port-to-br "${interface}" 2>/dev/null || true)"
+        fi
+        if [ "${bridge}" != 'br-ex' ] && command -v docker >/dev/null 2>&1 && docker inspect openvswitch_db >/dev/null 2>&1; then
+          bridge="$(docker exec openvswitch_db ovs-vsctl --timeout=10 port-to-br "${interface}" 2>/dev/null || true)"
+        fi
+        if [ "${bridge}" != 'br-ex' ] && [ -L "/sys/class/net/${interface}/master" ]; then
+          bridge="$(basename "$(readlink -f "/sys/class/net/${interface}/master")")"
+        fi
+        if [ "${bridge}" != 'br-ex' ]; then
+          echo "The deployed provider interface ${interface} is not an exact br-ex port." >&2
+          exit 1
+        fi
+      changed_when: false
+      when: openwrt_provider_deployed | length > 0
+
+    - name: Require an unenslaved external interface before probing a fresh node
+      ansible.builtin.raw: |
+        set -eu
+        interface={{ openwrt_provider_probe.interface | quote }}
+        ip link show dev "${interface}" >/dev/null
+        test ! -e "/sys/class/net/${interface}/master"
+        if ip link show dev br-ex >/dev/null 2>&1; then
+          echo 'br-ex exists; refusing a temporary provider address.' >&2
+          exit 1
+        fi
+        if ip -o address show dev "${interface}" | grep -Fq {{ openwrt_provider_probe.temporary_cidr | quote }}; then
+          echo 'The temporary provider address already exists.' >&2
+          exit 1
+        fi
+        if ip -4 -o address show dev "${interface}" | grep -q .; then
+          echo 'The provider interface already has an IPv4 address.' >&2
+          exit 1
+        fi
+      changed_when: false
+      when: openwrt_provider_probe | length > 0
+
+    - name: Add, test, and always remove the temporary provider address
+      when: openwrt_provider_probe | length > 0
+      block:
+        - name: Add the temporary provider address
+          ansible.builtin.raw: >-
+            ip address add {{ openwrt_provider_probe.temporary_cidr | quote }}
+            dev {{ openwrt_provider_probe.interface | quote }}
+          changed_when: true
+
+        - name: Record that the temporary provider address was added
+          ansible.builtin.set_fact:
+            openwrt_provider_address_added: true
+
+        - name: Ping the provider gateway
+          ansible.builtin.raw: >-
+            ping -I {{ openwrt_provider_probe.interface | quote }}
+            -c 3 -W 2 {{ openwrt_provider_probe.gateway | quote }}
+          changed_when: false
+      always:
+        - name: Remove only the temporary provider address
+          ansible.builtin.raw: >-
+            ip address delete {{ openwrt_provider_probe.temporary_cidr | quote }}
+            dev {{ openwrt_provider_probe.interface | quote }}
+          register: openwrt_provider_address_removed
+          changed_when: openwrt_provider_address_removed.rc == 0
+          failed_when: openwrt_provider_address_removed.rc != 0
+          when: openwrt_provider_address_added | bool
+
+        - name: Require the provider probe address to be absent
+          ansible.builtin.raw: >-
+            ! ip -o address show dev {{ openwrt_provider_probe.interface | quote }}
+            | grep -Fq {{ openwrt_provider_probe.temporary_cidr | quote }}
+          changed_when: false

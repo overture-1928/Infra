@@ -1,0 +1,37 @@
+enable_resources = false
+ssh_public_key   = "ssh-ed25519 REPLACE_WITH_PUBLIC_KEY operator"
+
+# Every address below uses an RFC 5737 documentation range. Replace all of
+# them with the same values reviewed in inventory/openstack-plan.local.yml.
+external_cidr    = "198.51.100.0/24"
+external_gateway = "198.51.100.1"
+external_dns     = ["192.0.2.1"]
+floating_ip_pool = {
+  start = "198.51.100.50"
+  end   = "198.51.100.99"
+}
+tenant_cidr    = "203.0.113.0/24"
+tenant_gateway = "203.0.113.1"
+admin_cidr     = "192.0.2.0/24"
+
+# Keep this equal to cluster.api_vip in inventory/openstack-cluster.local.yml.
+# Kolla HAProxy exposes the management Kubernetes API on this HA address.
+management_api_address = "192.0.2.10"
+
+# Resolves through tenant_cidr, so changing the tenant CIDR keeps kube-vip in it.
+# Neutron allocation pools exclude this address.
+kubernetes_api_host_number = 10
+
+# The tenant router reserves host .2 of external_cidr for its provider gateway
+# port. Floating IPs start at .50 and must not use this address.
+
+# Start with k8s-01. Add k8s-02 and k8s-03 together after three physical OpenStack compute hosts
+# are available. Keep the existing k8s-01 boot volume on fast; changing its
+# type would request a replacement that prevent_destroy intentionally blocks.
+# New nodes use Ceph, and Cinder CSI provides Ceph-backed workload storage.
+# Control-plane VMs use strict physical-host anti-affinity.
+kubernetes_nodes = {
+  k8s-01 = { fixed_ip = "203.0.113.11", floating_ip = "198.51.100.50", volume_size = 120, volume_type = "fast", roles = ["control_plane", "etcd", "worker"], inventory_order = 10 }
+#   k8s-02 = { fixed_ip = "203.0.113.12", floating_ip = "198.51.100.51", volume_size = 120, volume_type = "ceph", roles = ["control_plane", "etcd", "worker"], inventory_order = 20 }
+#   k8s-03 = { fixed_ip = "203.0.113.13", floating_ip = "198.51.100.52", volume_size = 120, volume_type = "ceph", roles = ["control_plane", "etcd", "worker"], inventory_order = 30 }
+}

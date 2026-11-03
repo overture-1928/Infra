@@ -1,0 +1,144 @@
+#cloud-config
+autoinstall:
+  version: 1
+  locale: ko_KR.UTF-8
+  keyboard:
+    layout: us
+  timezone: Asia/Seoul
+  refresh-installer:
+    update: true
+  identity:
+    hostname: @@HOSTNAME@@
+    username: operator
+    password: "@@PASSWORD_HASH@@"
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - "@@SSH_PUBLIC_KEY@@"
+  network:
+    version: 2
+    ethernets:
+      @@MANAGEMENT_INTERFACE@@:
+        match:
+          macaddress: @@MANAGEMENT_MAC@@
+        set-name: @@MANAGEMENT_INTERFACE@@
+        dhcp4: false
+        addresses:
+          - @@MANAGEMENT_ADDRESS@@
+        routes:
+          - to: default
+            via: @@MANAGEMENT_GATEWAY@@
+        nameservers:
+          addresses:
+@@DNS_SERVERS@@
+  storage:
+    config:
+      - id: disk-os
+        type: disk
+        match:
+          serial: @@OS_DISK_SERIAL@@
+        ptable: gpt
+        wipe: superblock-recursive
+        grub_device: true
+      - id: part-bios
+        type: partition
+        device: disk-os
+        size: 1M
+        flag: bios_grub
+      - id: part-efi
+        type: partition
+        device: disk-os
+        size: 1G
+        flag: boot
+        grub_device: true
+      - id: format-efi
+        type: format
+        volume: part-efi
+        fstype: fat32
+        label: EFI
+      - id: mount-efi
+        type: mount
+        device: format-efi
+        path: /boot/efi
+      - id: part-boot
+        type: partition
+        device: disk-os
+        size: 2G
+      - id: format-boot
+        type: format
+        volume: part-boot
+        fstype: ext4
+        label: boot
+      - id: mount-boot
+        type: mount
+        device: format-boot
+        path: /boot
+      - id: part-lvm
+        type: partition
+        device: disk-os
+        size: -1
+      - id: vg-os
+        type: lvm_volgroup
+        name: ubuntu-vg
+        devices:
+          - part-lvm
+      - id: lv-root
+        type: lvm_partition
+        volgroup: vg-os
+        name: root
+        size: 64G
+      - id: format-root
+        type: format
+        volume: lv-root
+        fstype: ext4
+        label: root
+      - id: mount-root
+        type: mount
+        device: format-root
+        path: /
+      - id: lv-var-log
+        type: lvm_partition
+        volgroup: vg-os
+        name: var-log
+        size: 20G
+      - id: format-var-log
+        type: format
+        volume: lv-var-log
+        fstype: ext4
+        label: var-log
+      - id: mount-var-log
+        type: mount
+        device: format-var-log
+        path: /var/log
+      - id: lv-swap
+        type: lvm_partition
+        volgroup: vg-os
+        name: swap
+        size: 8G
+      - id: format-swap
+        type: format
+        volume: lv-swap
+        fstype: swap
+      - id: mount-swap
+        type: mount
+        device: format-swap
+        path: none
+  packages:
+    - ca-certificates
+    - curl
+    - git
+    - lvm2
+    - python3
+    - python3-yaml
+    - python3-venv
+    - unzip
+  updates: security
+  late-commands:
+    - >-
+      curtin in-target --target=/target -- /bin/sh -c
+      "printf '%s\n' 'operator ALL=(ALL:ALL) NOPASSWD: ALL' > /etc/sudoers.d/90-operator-ansible &&
+      chmod 0440 /etc/sudoers.d/90-operator-ansible &&
+      /usr/sbin/visudo -cf /etc/sudoers.d/90-operator-ansible"
+    - curtin in-target --target=/target -- systemctl enable ssh
+  shutdown: reboot

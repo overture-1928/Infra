@@ -1,0 +1,92 @@
+---
+- name: Verify hosts before Kolla-Ansible deployment
+  hosts: openstack_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Require the stable inventory hostname
+      ansible.builtin.assert:
+        that:
+          - ansible_hostname == inventory_hostname
+        fail_msg: >-
+          The host name must equal {{ inventory_hostname }}. Run prepare-openstack-host.yml and reboot.
+
+    - name: Require reviewed interfaces after reboot
+      ansible.builtin.assert:
+        that:
+          - management_interface in ansible_interfaces
+          - neutron_external_interface in ansible_interfaces
+        fail_msg: The management or Neutron VLAN interface is missing.
+
+    - name: Read time synchronization state
+      ansible.builtin.command: timedatectl show --property=NTPSynchronized --value
+      register: ntp_synchronized
+      changed_when: false
+
+    - name: Require synchronized clocks
+      ansible.builtin.assert:
+        that:
+          - ntp_synchronized.stdout | trim == 'yes'
+        fail_msg: Chrony has not synchronized this host yet.
+
+    - name: Read host iSCSI unit states
+      ansible.builtin.command: >-
+        systemctl is-active iscsid.service iscsid.socket open-iscsi.service
+      register: host_iscsi_units
+      changed_when: false
+      failed_when: false
+
+    - name: Require host iSCSI units to stay inactive for Kolla
+      ansible.builtin.assert:
+        that:
+          - "'active' not in host_iscsi_units.stdout_lines"
+        fail_msg: >-
+          Host iscsid/open-iscsi conflicts with Kolla's iscsid container; rerun prepare-hosts.
+
+    - name: Read the Docker data mount
+      ansible.builtin.command: findmnt --mountpoint /var/lib/docker
+      register: docker_mount
+      changed_when: false
+      failed_when: false
+      when: require_docker_mount | bool
+
+    - name: Require separate Docker data capacity
+      ansible.builtin.assert:
+        that:
+          - docker_mount.rc == 0
+        fail_msg: /var/lib/docker must be a reviewed separate mount before Kolla deployment.
+      when: require_docker_mount | bool
+
+    - name: Read local LVM volume groups
+      ansible.builtin.command: vgs --noheadings -o vg_name
+      register: volume_groups
+      changed_when: false
+      when: local_lvm_storage | bool
+
+    - name: Require the reviewed cloud01 Cinder volume groups
+      ansible.builtin.assert:
+        that:
+          - "'cinder-ssd' in volume_groups.stdout_lines | map('trim') | list"
+          - "'cinder-nvme' in volume_groups.stdout_lines | map('trim') | list"
+        fail_msg: The reviewed cinder-ssd and cinder-nvme volume groups are required on the LVM storage host.
+      when: local_lvm_storage | bool
+
+    - name: Read cluster hostname IPv4 resolution
+      ansible.builtin.command: "getent ahostsv4 {{ item.key }}"
+      loop: "{{ openstack_cluster_hosts | dict2items }}"
+      changed_when: false
+      register: cluster_hostname_resolution
+
+    - name: Require each cluster hostname to resolve only to its management address
+      ansible.builtin.assert:
+        that:
+          - item.stdout_lines | length > 0
+          - >-
+            item.stdout_lines
+            | map('regex_replace', '\\s.*$', '')
+            | unique
+            | list
+            == [item.item.value]
+        fail_msg: >-
+          {{ item.item.key }} must resolve only to {{ item.item.value }} for Kolla RabbitMQ.
+      loop: "{{ cluster_hostname_resolution.results }}"

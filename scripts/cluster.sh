@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+source "$repo_dir/config/versions.env"
+renderer="$repo_dir/scripts/render-openstack-cluster.py"
+cluster_cache="$repo_dir/.cache/cluster"
+ansible_inventory="$cluster_cache/ansible-inventory.yml"
+kolla_inventory="$repo_dir/kolla/generated/multinode"
+kolla_venv="$repo_dir/.cache/kolla-venv"
+terraform_bin="$repo_dir/.cache/terraform/bin/terraform"
+
+fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+render_topology() {
+  "$renderer"
+}
+
+require_kolla() {
+  [[ -x $kolla_venv/bin/kolla-ansible ]] || fail 'Run scripts/cluster.sh setup first.'
+}
+
+require_terraform() {
+  [[ -x $terraform_bin ]] || fail 'Run scripts/cluster.sh setup to install the pinned Terraform CLI.'
+  local actual
+  actual=$(
+    "$terraform_bin" version -json 2>/dev/null |
+      python3 -c 'import json,sys; print(json.load(sys.stdin)["terraform_version"])' 2>/dev/null || true
+  )
+  [[ $actual == "$TERRAFORM_CLI_VERSION" ]] || \
+    fail "Expected Terraform $TERRAFORM_CLI_VERSION at $terraform_bin; found ${actual:-unknown}."
+}
+
+prepare_terraform() {
+  require_terraform
+  export OS_CLIENT_CONFIG_FILE=${OS_CLIENT_CONFIG_FILE:-/etc/kolla/clouds.yaml}
+  [[ -r $OS_CLIENT_CONFIG_FILE ]] || \
+    fail "OpenStack cloud configuration is not readable: $OS_CLIENT_CONFIG_FILE"
+  mkdir -p "$cluster_cache"
+  "$terraform_bin" -chdir="$repo_dir/terraform/openstack" \
+    init -input=false -lockfile=readonly
+}
+
+render_all() {
+  legacy_single_inventory="$repo_dir/kolla/generated/all"-in-one
+  [[ ! -f $legacy_single_inventory ]] || \
+    printf 'WARNING: the legacy single-node Kolla inventory is ignored; the stable inventory is generated/multinode.\n' >&2
+  render_topology
+  require_kolla
+  "$repo_dir/scripts/render-kolla-multinode.sh"
+}
+
+ansible_playbook() {
+  local executable
+  if [[ -x $kolla_venv/bin/ansible-playbook ]]; then
+    executable="$kolla_venv/bin/ansible-playbook"
+  else
+    executable=$(command -v ansible-playbook || true)
+  fi
+  [[ -n $executable ]] || fail 'Install ansible-core or run scripts/cluster.sh setup.'
+  ANSIBLE_CONFIG="$repo_dir/ansible/ansible.cfg" \
+  ANSIBLE_LOCAL_TEMP=/tmp/openstack-cluster-ansible \
+    "$executable" -i "$ansible_inventory" "$@"
+}
+
+reject_generic_managed_deploy() {
+  if [[ $(plan_value platform.magnum_capi.enabled) == True ]]; then
+    fail 'Managed platform profile is enabled; use platform-apply or platform-reconfigure so CAPI and the Magnum kubeconfig are prepared first.'
+  fi
+}
+
+require_root() {
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'Run this command through sudo.'
+}
+
+plan_value() {
+  local expression=$1
+  python3 - "$cluster_cache/cluster-plan.json" "$expression" <<'PY'
+import json
+import sys
+
+data = json.load(open(sys.argv[1]))
+value = data
+for key in sys.argv[2].split('.'):
+    value = value[key]
+if isinstance(value, list):
+    print(",".join(value))
+else:
+    print(value)
+PY
+}
+
+verify_hosts() {
+  render_all
+  ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
+}
+
+deploy_openstack() {
+  require_root
+  render_all
+  reject_generic_managed_deploy
+  ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
+  "$repo_dir/scripts/openstack.sh" bootstrap --inventory "$kolla_inventory"
+  "$repo_dir/scripts/openstack.sh" gather-facts --inventory "$kolla_inventory"
+  "$repo_dir/scripts/openstack.sh" deploy --inventory "$kolla_inventory"
+  "$repo_dir/scripts/openstack.sh" validate-config --inventory "$kolla_inventory"
+  "$repo_dir/scripts/openstack.sh" check --inventory "$kolla_inventory"
+}
+
+command_name=${1:-help}
+case "$command_name" in
+  help)
+    cat <<'HELP'
+Usage: scripts/cluster.sh COMMAND
+
+  validate             validate the authoritative node topology
+  setup                install pinned Kolla/Terraform tooling, preserve passwords, render inventories
+  render               regenerate Ansible and Kolla inventories
+  prepare-hosts        configure every enabled Ubuntu host; reboot them afterwards
+  verify-hosts         verify hostnames, NICs, time, Docker mounts and local LVM
+  openwrt-discover     collect read-only OpenWrt hardware and network facts
+  openwrt-plan         render the OpenWrt VLAN 10 UCI plan without changing it
+  openwrt-apply        apply, probe and confirm OpenWrt with an automatic rollback guard
+  openwrt-status       verify the last confirmed OpenWrt plan
+  openwrt-rollback     manually trigger a still-armed OpenWrt rollback transaction
+  deploy-openstack     deploy the current one-node or fresh multinode topology (root)
+  expand-openstack     back up DB and expand an existing cloud to 3+ nodes (root, confirmation)
+  verify-openstack     verify APIs and registered OpenStack services
+  terraform-plan       create a reviewed Kubernetes infrastructure plan
+  terraform-apply      apply that saved plan serially (confirmation)
+  deploy-kubernetes    install or scale Kubernetes through Kubespray
+  prepare-k8s-cloud    create a dedicated non-admin management-cloud credential
+  platform-plan        verify the 3-node/Ceph management-service prerequisites (root)
+  platform-apply       install CAPI/CAPO/ORC and deploy Magnum/Octavia (root, confirmation)
+  platform-reconfigure reconcile the pinned platform providers and Kolla services (root)
+  platform-status      verify deployed CAPI, Magnum, Octavia and OVN state (root)
+  hosted-plan          render a future-only K0smotron hosted-control-plane scaffold
+
+Edit inventory/openstack-cluster.local.yml to enable future physical nodes.
+Destructive disk preparation and LVM-to-Ceph data migration are separate reviewed workflows.
+HELP
+    ;;
+  validate)
+    "$renderer" --validate-only
+    ;;
+  setup)
+    "$repo_dir/scripts/openstack.sh" setup
+    "$repo_dir/scripts/setup-terraform.sh"
+    ;;
+  render)
+    render_all
+    ;;
+  prepare-hosts)
+    render_all
+    ansible_playbook "$repo_dir/ansible/playbooks/prepare-openstack-host.yml"
+    echo 'Host preparation completed. Reboot changed hosts, then run verify-hosts.'
+    ;;
+  verify-hosts)
+    verify_hosts
+    ;;
+  openwrt-discover)
+    "$repo_dir/scripts/openwrt-router.sh" discover
+    ;;
+  openwrt-plan)
+    "$repo_dir/scripts/openwrt-router.sh" plan
+    ;;
+  openwrt-apply)
+    "$repo_dir/scripts/openwrt-router.sh" apply
+    ;;
+  openwrt-status)
+    "$repo_dir/scripts/openwrt-router.sh" status
+    ;;
+  openwrt-rollback)
+    "$repo_dir/scripts/openwrt-router.sh" rollback
+    ;;
+  deploy-openstack)
+    deploy_openstack
+    ;;
+  expand-openstack)
+    require_root
+    render_all
+    reject_generic_managed_deploy
+    node_count=$(plan_value node_count)
+    (( node_count >= 3 )) || fail 'Expansion requires at least three enabled nodes.'
+    controllers=$(plan_value roles.control)
+    expected="EXPAND-OPENSTACK:${controllers}"
+    [[ ${OPENSTACK_EXPAND_CONFIRM:-} == "$expected" ]] || \
+      fail "Set OPENSTACK_EXPAND_CONFIRM='$expected' after reviewing the rendered inventories."
+    ansible_playbook "$repo_dir/ansible/playbooks/verify-openstack-hosts.yml"
+    "$repo_dir/scripts/openstack.sh" backup --inventory "$kolla_inventory"
+    "$repo_dir/scripts/openstack.sh" gather-facts --inventory "$kolla_inventory"
+    "$repo_dir/scripts/openstack.sh" bootstrap --inventory "$kolla_inventory"
+    "$repo_dir/scripts/openstack.sh" deploy --inventory "$kolla_inventory"
+    "$repo_dir/scripts/openstack.sh" validate-config --inventory "$kolla_inventory"
+    "$repo_dir/scripts/openstack.sh" check --inventory "$kolla_inventory"
+    "$repo_dir/scripts/verify-openstack-cluster.sh"
+    ;;
+  verify-openstack)
+    require_root
+    "$repo_dir/scripts/verify-openstack-cluster.sh"
+    ;;
+  terraform-plan)
+    prepare_terraform
+    "$terraform_bin" -chdir="$repo_dir/terraform/openstack" \
+      plan -input=false -out="$cluster_cache/kubernetes.tfplan"
+    ;;
+  terraform-apply)
+    [[ ${TERRAFORM_APPLY_CONFIRM:-} == APPLY-KUBERNETES-INFRA ]] || \
+      fail 'Set TERRAFORM_APPLY_CONFIRM=APPLY-KUBERNETES-INFRA after reviewing terraform-plan.'
+    [[ -f $cluster_cache/kubernetes.tfplan ]] || fail 'Run terraform-plan first.'
+    prepare_terraform
+    "$terraform_bin" -chdir="$repo_dir/terraform/openstack" \
+      apply -input=false -parallelism=1 "$cluster_cache/kubernetes.tfplan"
+    ;;
+  deploy-kubernetes)
+    "$repo_dir/scripts/deploy-openstack-kubernetes.sh"
+    ;;
+  prepare-k8s-cloud)
+    "$repo_dir/scripts/management-kubernetes-cloud.sh" create-credential
+    ;;
+  platform-plan)
+    "$repo_dir/scripts/platform-services.sh" plan
+    ;;
+  platform-apply)
+    "$repo_dir/scripts/platform-services.sh" apply
+    ;;
+  platform-reconfigure)
+    "$repo_dir/scripts/platform-services.sh" reconfigure
+    ;;
+  platform-status)
+    "$repo_dir/scripts/platform-services.sh" status
+    ;;
+  hosted-plan)
+    "$repo_dir/scripts/platform-services.sh" hosted-control-plane-plan
+    ;;
+  *)
+    fail "Unknown command: $command_name"
+    ;;
+esac

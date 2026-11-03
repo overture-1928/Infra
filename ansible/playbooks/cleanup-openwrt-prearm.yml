@@ -1,0 +1,56 @@
+---
+- name: Release only this controller's failed pre-arm OpenWrt transaction
+  hosts: openwrt
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
+  pre_tasks:
+    - name: Load the reviewed router plan on the controller
+      ansible.builtin.set_fact:
+        openwrt_plan: "{{ lookup('ansible.builtin.file', openwrt_plan_path) | from_json }}"
+        openwrt_apply_attempt: "{{ lookup('ansible.builtin.env', 'OPENWRT_APPLY_ATTEMPT') }}"
+      no_log: true
+
+    - name: Validate the cleanup identity
+      ansible.builtin.assert:
+        that:
+          - openwrt_plan.schema_version | int == 1
+          - openwrt_plan.change_id is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+          - openwrt_apply_attempt is match('^[0-9a-f]{32}$')
+        fail_msg: The pre-arm cleanup identity is invalid.
+
+  tasks:
+    - name: Clean only the matching transaction before its rollback guard was armed
+      ansible.builtin.raw: |
+        set -eu
+        root=/root/openwrt-rollback
+        claim="${root}/APPLY_LOCK"
+        transaction="${root}/{{ openwrt_plan.change_id }}"
+        change_id={{ openwrt_plan.change_id | quote }}
+        attempt_id={{ openwrt_apply_attempt | quote }}
+        if [ ! -d "${claim}" ]; then
+          exit 0
+        fi
+        test "$(cat "${claim}/CHANGE_ID")" = "${change_id}"
+        test "$(cat "${claim}/ATTEMPT_ID")" = "${attempt_id}"
+        if [ -e "${transaction}/ARMED" ] || [ -e "${root}/current/ARMED" ]; then
+          echo 'The rollback guard is armed; refusing pre-arm cleanup.' >&2
+          exit 1
+        fi
+        if [ -d "${transaction}" ]; then
+          test "$(cat "${transaction}/CHANGE_ID")" = "${change_id}"
+          test "$(cat "${transaction}/ATTEMPT_ID")" = "${attempt_id}"
+          touch "${transaction}/FAILED_PRE_ARM"
+        fi
+        if [ "$(readlink "${root}/current" 2>/dev/null || true)" = "${transaction}" ]; then
+          /etc/init.d/openwrt-rollback-guard stop >/dev/null 2>&1 || true
+          /etc/init.d/openwrt-rollback-guard disable >/dev/null 2>&1 || true
+          rm -f /etc/init.d/openwrt-rollback-guard "${root}/current"
+        fi
+        rm -f "${claim}/CHANGE_ID" "${claim}/ATTEMPT_ID"
+        rmdir "${claim}"
+        printf 'cleaned\n'
+      register: openwrt_prearm_cleanup
+      changed_when: "'cleaned' in openwrt_prearm_cleanup.stdout"

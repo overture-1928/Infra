@@ -1,0 +1,14 @@
+---
+kube_version: 1.36.4
+cluster_name: kubernetes.home.arpa
+container_manager: containerd
+kube_network_plugin: calico
+kube_proxy_mode: ipvs
+kube_proxy_strict_arp: true
+
+kube_vip_enabled: true
+kube_vip_controlplane_enabled: true
+kube_vip_arp_enabled: true
+kube_vip_interface: ens3
+
+local_path_provisioner_enabled: true

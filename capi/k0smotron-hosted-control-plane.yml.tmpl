@@ -1,0 +1,35 @@
+# Future-only scaffold. scripts/platform-services.sh never applies this file.
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: "@@CLUSTER_NAME@@"
+  namespace: "@@NAMESPACE@@"
+  annotations:
+    platform.openstack.example/k0smotron-version: "@@K0SMOTRON_VERSION@@"
+spec:
+  controlPlaneRef:
+    apiGroup: controlplane.cluster.x-k8s.io
+    kind: K0smotronControlPlane
+    name: "@@CLUSTER_NAME@@-control-plane"
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+kind: K0smotronControlPlane
+metadata:
+  name: "@@CLUSTER_NAME@@-control-plane"
+  namespace: "@@NAMESPACE@@"
+spec:
+  version: "@@K0S_VERSION@@"
+  replicas: 3
+  persistence:
+    type: pvc
+    persistentVolumeClaim:
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 10Gi
+        storageClassName: "@@STORAGE_CLASS@@"
+  service:
+    type: LoadBalancer

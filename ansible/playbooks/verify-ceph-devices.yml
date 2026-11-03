@@ -1,0 +1,218 @@
+---
+- name: Verify explicitly selected Ceph OSD devices
+  hosts: ceph_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Require the topology bare hostname
+      ansible.builtin.assert:
+        that:
+          - ansible_hostname == inventory_hostname
+        fail_msg: >-
+          Ceph requires the remote bare hostname to equal {{ inventory_hostname }}.
+
+    - name: Require at least one reviewed OSD device
+      ansible.builtin.assert:
+        that:
+          - ceph_osd_devices is sequence
+          - ceph_osd_devices | length > 0
+        fail_msg: Every Ceph host must declare an explicit OSD device.
+
+    - name: Check for a host-installed ceph-osd package
+      ansible.builtin.command:
+        argv:
+          - dpkg-query
+          - --show
+          - --showformat=${db:Status-Abbrev}
+          - ceph-osd
+      register: ceph_osd_package
+      changed_when: false
+      failed_when: false
+
+    - name: Reject a host-installed ceph-osd package
+      ansible.builtin.assert:
+        that:
+          - ceph_osd_package.rc != 0 or ceph_osd_package.stdout[:2] != 'ii'
+        fail_msg: >-
+          Remove the host-installed ceph-osd package before cephadm deployment;
+          package daemons can conflict with containerized cephadm daemons.
+
+    - name: Inspect OSD devices without modifying them
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+            import ipaddress
+            import json
+            import os
+            import stat
+            import subprocess
+            import sys
+
+            def fail(message):
+                raise SystemExit(f"device preflight failed: {message}")
+
+            def run(argv, allowed=(0,)):
+                result = subprocess.run(
+                    argv,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                if result.returncode not in allowed:
+                    fail(
+                        f"{' '.join(argv)} returned {result.returncode}: "
+                        f"{result.stderr.strip()}"
+                    )
+                return result
+
+            by_id, expected_serial, minimum_text, device_class = sys.argv[1:5]
+            ceph_address, public_cidr, cluster_cidr = sys.argv[5:8]
+            minimum = int(minimum_text)
+
+            if not by_id.startswith("/dev/disk/by-id/") or not os.path.islink(by_id):
+                fail(f"{by_id} is not an existing /dev/disk/by-id symlink")
+            resolved = os.path.realpath(by_id)
+            try:
+                mode = os.stat(resolved).st_mode
+            except OSError as exc:
+                fail(f"cannot stat {by_id}: {exc}")
+            if not stat.S_ISBLK(mode):
+                fail(f"{by_id} resolves to non-block path {resolved}")
+
+            device_json = json.loads(
+                run(
+                    [
+                        "lsblk", "--json", "--bytes", "--nodeps",
+                        "--output", "PATH,TYPE,SIZE,SERIAL,ROTA,TRAN,RO", resolved,
+                    ]
+                ).stdout
+            )
+            devices = device_json.get("blockdevices", [])
+            if len(devices) != 1 or devices[0].get("type") != "disk":
+                fail(f"{by_id} does not resolve to exactly one whole disk")
+            actual = devices[0]
+            actual_serial = str(actual.get("serial") or "").strip()
+            if actual_serial != expected_serial:
+                fail(
+                    f"serial mismatch for {by_id}: expected {expected_serial}, "
+                    f"found {actual_serial or '<empty>'}"
+                )
+            actual_size = int(actual.get("size") or 0)
+            if actual_size < minimum:
+                fail(
+                    f"{by_id} has {actual_size} bytes, below reviewed minimum {minimum}"
+                )
+            if bool(actual.get("ro")):
+                fail(f"{by_id} is read-only")
+            rotational = bool(actual.get("rota"))
+            transport = str(actual.get("tran") or "").lower()
+            if device_class == "hdd" and not rotational:
+                fail(f"{by_id} was declared hdd but is non-rotational")
+            if device_class == "ssd" and (rotational or transport == "nvme"):
+                fail(f"{by_id} was declared SATA/SAS ssd but reports rota={rotational}, tran={transport}")
+            if device_class == "nvme" and transport != "nvme" and not os.path.basename(resolved).startswith("nvme"):
+                fail(f"{by_id} was declared nvme but reports transport {transport or '<empty>'}")
+
+            tree = json.loads(
+                run(
+                    [
+                        "lsblk", "--json", "--output",
+                        "PATH,TYPE,FSTYPE,MOUNTPOINTS", resolved,
+                    ]
+                ).stdout
+            ).get("blockdevices", [])
+            if len(tree) != 1:
+                fail(f"cannot inspect descendants of {by_id}")
+            if tree[0].get("children"):
+                fail(f"{by_id} contains partitions or mapped child devices")
+            if tree[0].get("fstype"):
+                fail(f"{by_id} contains filesystem type {tree[0]['fstype']}")
+            if any(value for value in (tree[0].get("mountpoints") or [])):
+                fail(f"{by_id} is mounted")
+
+            signatures = run(
+                ["wipefs", "--no-act", "--noheadings", "--output", "TYPE", resolved]
+            ).stdout.strip()
+            if signatures:
+                fail(f"{by_id} contains signatures: {signatures.replace(chr(10), ', ')}")
+            probe = run(["blkid", "--probe", "--output", "export", resolved], allowed=(0, 2))
+            if probe.returncode == 0 and probe.stdout.strip():
+                fail(f"{by_id} has a blkid signature")
+
+            pvs = json.loads(
+                run(
+                    [
+                        "pvs", "--reportformat", "json", "--units", "b",
+                        "--nosuffix", "--options", "pv_name",
+                    ]
+                ).stdout
+            )
+            for report in pvs.get("report", []):
+                for pv in report.get("pv", []):
+                    pv_name = str(pv.get("pv_name") or "").strip()
+                    if pv_name and os.path.realpath(pv_name) == resolved:
+                        fail(f"{by_id} is an LVM physical volume ({pv_name})")
+
+            root_source = run(["findmnt", "--noheadings", "--output", "SOURCE", "/"]).stdout.strip()
+            root_ancestry = run(["lsblk", "--inverse", "--noheadings", "--output", "PATH", root_source])
+            if resolved in {os.path.realpath(path) for path in root_ancestry.stdout.splitlines()}:
+                fail(f"{by_id} contains the active root filesystem")
+
+            swaps = run(["swapon", "--noheadings", "--raw", "--show=NAME"]).stdout.splitlines()
+            if resolved in {os.path.realpath(path) for path in swaps if path}:
+                fail(f"{by_id} is active swap")
+            holders = os.listdir(f"/sys/class/block/{os.path.basename(resolved)}/holders")
+            if holders:
+                fail(f"{by_id} has active holders: {', '.join(sorted(holders))}")
+
+            addresses = set()
+            for link in json.loads(run(["ip", "--json", "address", "show"]).stdout):
+                for info in link.get("addr_info", []):
+                    local = info.get("local")
+                    if local:
+                        addresses.add(ipaddress.ip_address(local))
+            expected_address = ipaddress.ip_address(ceph_address)
+            public_network = ipaddress.ip_network(public_cidr)
+            if expected_address not in addresses:
+                fail(f"Ceph address {expected_address} is not configured on this host")
+            if not any(address in public_network for address in addresses):
+                fail(f"no host address belongs to Ceph public network {public_network}")
+            if cluster_cidr:
+                cluster_network = ipaddress.ip_network(cluster_cidr)
+                if not any(address in cluster_network for address in addresses):
+                    fail(f"no host address belongs to Ceph cluster network {cluster_network}")
+
+            print(
+                json.dumps(
+                    {
+                        "by_id": by_id,
+                        "resolved": resolved,
+                        "serial": actual_serial,
+                        "size_bytes": actual_size,
+                        "device_class": device_class,
+                    },
+                    sort_keys=True,
+                )
+            )
+          - "{{ item.by_id }}"
+          - "{{ item.serial }}"
+          - "{{ item.min_size_bytes | string }}"
+          - "{{ item.device_class }}"
+          - "{{ ceph_address }}"
+          - "{{ ceph_public_network }}"
+          - "{{ ceph_cluster_network }}"
+      loop: "{{ ceph_osd_devices }}"
+      loop_control:
+        label: "{{ item.by_id }}"
+      register: ceph_device_preflight
+      changed_when: false
+
+    - name: Report verified OSD device identities
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ ceph_device_preflight.results }}"
+      loop_control:
+        label: "{{ item.item.by_id }}"

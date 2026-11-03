@@ -1,0 +1,66 @@
+---
+status: proposed_not_applied
+
+# Public example networks use RFC 5737 documentation ranges. Copy this file
+# to openstack-plan.local.yml before using it for hardware or router changes.
+
+host:
+  name: cloud01
+  os: Ubuntu Server 24.04 LTS
+  # Locally administered example MAC. Replace it in the ignored local copy.
+  management_mac: "02:00:00:00:00:01"
+  management_interface: mgmt0
+  management_address: "192.0.2.2/24"
+  management_gateway: "192.0.2.1"
+  dns_servers:
+    - "192.0.2.1"
+
+openstack:
+  series: "2026.2"
+  deployment: single-node-on-multinode-inventory
+  api_vip: "192.0.2.10"
+  external_interface: mgmt0.10
+  external_vlan: 10
+  external_cidr: "198.51.100.0/24"
+  external_gateway: "198.51.100.1"
+  floating_ip_pool:
+    start: "198.51.100.50"
+    end: "198.51.100.99"
+  tenant_cidr: "203.0.113.0/24"
+  tenant_gateway: "203.0.113.1"
+
+storage:
+  os:
+    serial: EXAMPLE-OS-SSD-0001
+    layout:
+      efi: 1GiB
+      boot: 2GiB
+      root: 64GiB
+      var_log: 20GiB
+      swap: 8GiB
+      remainder: free space in ubuntu-vg for later extension
+  openstack_data:
+    serial: EXAMPLE-DATA-SSD-0001
+    docker_partition: 256GiB
+    cinder_volume_group: cinder-ssd
+    cinder_type: standard
+  fast_volumes:
+    serial: EXAMPLE-FAST-NVME-0001
+    cinder_volume_group: cinder-nvme
+    cinder_type: fast
+  untouched:
+    - serial: EXAMPLE-RESERVED-SSD-0001
+      description: 512GB SSD reserved for later use
+    - serial: EXAMPLE-RESERVED-HDD-0001
+      description: 4TB HDD reserved for later use
+    - serial: EXAMPLE-RESERVED-HDD-0002
+      description: 3TB HDD reserved for later use
+
+kubernetes:
+  initial_nodes: 1
+  tenant_addresses:
+    - "203.0.113.11"
+  api_vip: "203.0.113.10"
+  expansion_nodes:
+    - "203.0.113.12"
+    - "203.0.113.13"

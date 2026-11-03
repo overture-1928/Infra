@@ -1,0 +1,167 @@
+---
+- name: Prepare Ubuntu hosts for Kolla-Ansible OpenStack
+  hosts: openstack_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Require Ubuntu 24.04
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_version is version('24.04', '>=')
+          - ansible_architecture == "x86_64"
+          - ansible_memtotal_mb >= 32000
+          - ansible_processor_vcpus >= 8 or 'compute' not in openstack_roles
+        fail_msg: This deployment requires Ubuntu Server 24.04 x86-64, at least 8 CPU threads and 32 GB RAM.
+
+    - name: Set the stable OpenStack hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: Remove Ubuntu's loopback hostname alias
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\s+'
+        state: absent
+
+    - name: Make every cluster hostname resolvable
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} MANAGED OPENSTACK CLUSTER HOSTS"
+        block: |
+          {% for host, address in openstack_cluster_hosts | dictsort %}
+          {{ address }} {{ host }}
+          {% endfor %}
+
+    - name: Report recommended memory headroom
+      ansible.builtin.debug:
+        msg: >-
+          {{ ansible_memtotal_mb }} MiB RAM is usable for evaluation, but 64 GiB or more is
+          recommended when OpenStack and a Kubernetes VM share this single physical host.
+      when: ansible_memtotal_mb < 60000
+
+    - name: Require hardware virtualization
+      ansible.builtin.command: grep -E -m1 '(vmx|svm)' /proc/cpuinfo
+      register: virtualization_flag
+      changed_when: false
+      when: "'compute' in openstack_roles"
+
+    - name: Install host prerequisites
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        name:
+          - chrony
+          - gdisk
+          - git
+          - jq
+          - lvm2
+          - open-iscsi
+          - parted
+          - python3-dev
+          - python3-pip
+          - python3-venv
+          - smartmontools
+          - thin-provisioning-tools
+        state: present
+
+    - name: Read current timezone
+      ansible.builtin.command: timedatectl show --property=Timezone --value
+      register: current_timezone
+      changed_when: false
+
+    - name: Set timezone
+      ansible.builtin.command: "timedatectl set-timezone {{ timezone }}"
+      when: current_timezone.stdout != timezone
+      changed_when: true
+
+    - name: Enable time synchronization
+      ansible.builtin.systemd_service:
+        name: chrony
+        enabled: true
+        state: started
+
+    - name: Disable host iSCSI units that conflict with Kolla's iscsid container
+      ansible.builtin.systemd_service:
+        name: "{{ item }}"
+        enabled: false
+        masked: true
+        state: stopped
+      loop:
+        - iscsid.service
+        - iscsid.socket
+        - open-iscsi.service
+
+    - name: Install persistent management and Neutron external network
+      ansible.builtin.template:
+        src: ../templates/99-openstack-network.yaml.j2
+        dest: /etc/netplan/99-openstack-network.yaml
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Generate netplan
+
+    - name: Enable IOMMU for later PCI passthrough
+      ansible.builtin.copy:
+        dest: /etc/default/grub.d/60-openstack-iommu.cfg
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT intel_iommu=on amd_iommu=on iommu=pt"
+      when: enable_iommu | bool
+      notify: Update grub
+
+    - name: Load VFIO modules at boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/openstack-vfio.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          vfio
+          vfio_iommu_type1
+          vfio_pci
+      when: enable_iommu | bool
+
+    - name: Configure required kernel modules
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/openstack.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          br_netfilter
+          overlay
+
+    - name: Load networking modules before applying sysctl settings
+      ansible.builtin.command: "modprobe {{ item }}"
+      loop:
+        - br_netfilter
+        - overlay
+      changed_when: false
+
+    - name: Configure forwarding and bridge filtering
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-openstack.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          net.ipv4.ip_forward = 1
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+      notify: Reload sysctl
+
+  handlers:
+    - name: Generate netplan
+      ansible.builtin.command: netplan generate
+      changed_when: true
+
+    - name: Update grub
+      ansible.builtin.command: update-grub
+      changed_when: true
+
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: true

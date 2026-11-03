@@ -1,0 +1,5 @@
+# Copy to kolla/config/nova/nova-compute.conf only after checking lspci and IOMMU groups.
+# Replace vendor_id and product_id with the exact GPU or HBA identifiers.
+[pci]
+device_spec = {"vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT"}
+alias = {"vendor_id":"REPLACE_VENDOR","product_id":"REPLACE_PRODUCT","device_type":"type-PCI","name":"passthrough-device"}

@@ -1,0 +1,293 @@
+---
+- name: Discover the OpenWrt router without changing it
+  hosts: openwrt
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    openwrt_discovery_path: "{{ playbook_dir }}/../../.cache/openwrt/discovery.json"
+  tasks:
+    - name: Require exactly one OpenWrt router
+      ansible.builtin.assert:
+        that:
+          - groups['openwrt'] | default([]) | length == 1
+        fail_msg: The OpenWrt inventory must contain exactly one router.
+      run_once: true
+
+    - name: Read the OpenWrt board document
+      ansible.builtin.raw: ubus call system board
+      register: openwrt_board_raw
+      changed_when: false
+
+    - name: Check router capabilities
+      ansible.builtin.raw: |
+        set -eu
+        if command -v fw4 >/dev/null 2>&1; then echo fw4=1; else echo fw4=0; fi
+        dsa=0
+        dsa_evidence=none
+        for dsa_path in /sys/class/net/*/dsa; do
+          if [ -e "${dsa_path}" ]; then
+            dsa=1
+            dsa_evidence=sysfs-dsa-port
+            break
+          fi
+        done
+        if [ "${dsa}" -eq 0 ] && uci -q show network | grep -q '=bridge-vlan$'; then
+          dsa=1
+          dsa_evidence=uci-bridge-vlan
+        fi
+        if [ "${dsa}" -eq 0 ] && ! command -v swconfig >/dev/null 2>&1; then
+          for section in $(uci -q show network | sed -n "s/^network\.\([^.=]*\)=device$/\1/p"); do
+            if [ "$(uci -q get "network.${section}.type" || true)" = bridge ] && \
+               [ -n "$(uci -q get "network.${section}.ports" || true)" ]; then
+              dsa=1
+              dsa_evidence=uci-bridge-device-without-swconfig
+              break
+            fi
+          done
+        fi
+        if [ "${dsa}" -eq 0 ] && command -v swconfig >/dev/null 2>&1; then
+          dsa_evidence=swconfig-present
+        fi
+        echo "dsa=${dsa}"
+        echo "dsa_evidence=${dsa_evidence}"
+        for config in network firewall dhcp; do
+          if [ -n "$(uci -q changes "${config}" || true)" ]; then
+            echo "pending_${config}=1"
+          else
+            echo "pending_${config}=0"
+          fi
+        done
+        if [ -e /root/openwrt-rollback/current/ARMED ]; then
+          echo rollback_guard_armed=1
+          printf 'rollback_guard_change_id=%s\n' "$(cat /root/openwrt-rollback/current/CHANGE_ID)"
+        else
+          echo rollback_guard_armed=0
+          echo rollback_guard_change_id=
+        fi
+        if [ -s /etc/dropbear/authorized_keys ] || [ -s /root/.ssh/authorized_keys ]; then
+          echo root_ssh_key_configured=1
+        else
+          echo root_ssh_key_configured=0
+        fi
+      register: openwrt_capabilities_raw
+      changed_when: false
+
+    - name: Hash the mutable router configuration files
+      ansible.builtin.raw: |
+        set -eu
+        for config in network firewall dhcp; do
+          test -f "/etc/config/${config}"
+          printf '%s=' "${config}"
+          sha256sum "/etc/config/${config}" | awk '{print $1}'
+        done
+      register: openwrt_config_hashes_raw
+      changed_when: false
+
+    - name: Read safe network UCI metadata
+      ansible.builtin.raw: |
+        uci -q show network | grep -E \
+          "^network\.[^.=]+=(interface|device|bridge-vlan)$|^network\.[^.=]+\.(type|proto|device|ifname|name|ports|vlan|ipaddr|netmask|gateway|dns|metric|delegate|auto|defaultroute|peerdns|ip6assign|ip6hint|ip6class|mtu)=" \
+          || true
+      register: openwrt_network_uci_raw
+      changed_when: false
+
+    - name: Read safe firewall UCI metadata
+      ansible.builtin.raw: |
+        uci -q show firewall | grep -E \
+          "^firewall\.[^.=]+=(defaults|zone|forwarding|rule)$|^firewall\.[^.=]+\.(name|src|dest|target|proto|family|src_ip|dest_ip|src_port|dest_port|device|network|input|output|forward|masq|mtu_fix|enabled)=" \
+          || true
+      register: openwrt_firewall_uci_raw
+      changed_when: false
+
+    - name: Read safe DHCP UCI metadata
+      ansible.builtin.raw: |
+        uci -q show dhcp | grep -E \
+          "^dhcp\.[^.=]+=(dnsmasq|dhcp|odhcpd)$|^dhcp\.[^.=]+\.(interface|start|limit|leasetime|ignore|dhcpv4|dhcpv6|ra|ra_management|ra_default|dynamicdhcp|authoritative|localservice|nonwildcard)=" \
+          || true
+      register: openwrt_dhcp_uci_raw
+      changed_when: false
+
+    - name: Read DSA bridge metadata
+      ansible.builtin.raw: |
+        set -eu
+        uci -q show network | sed -n "s/^network\.\([^.=]*\)=device$/\1/p" | while IFS= read -r section; do
+          [ "$(uci -q get "network.${section}.type" || true)" = bridge ] || continue
+          name="$(uci -q get "network.${section}.name" || true)"
+          ports="$(uci -q get "network.${section}.ports" || true)"
+          printf '%s\t%s\t%s\n' "${section}" "${name}" "${ports}"
+        done
+      register: openwrt_dsa_bridge_raw
+      changed_when: false
+
+    - name: Read DSA bridge VLAN metadata
+      ansible.builtin.raw: |
+        set -eu
+        uci -q show network | sed -n "s/^network\.\([^.=]*\)=bridge-vlan$/\1/p" | while IFS= read -r section; do
+          device="$(uci -q get "network.${section}.device" || true)"
+          vlan="$(uci -q get "network.${section}.vlan" || true)"
+          ports="$(uci -q get "network.${section}.ports" || true)"
+          printf '%s\t%s\t%s\t%s\n' "${section}" "${device}" "${vlan}" "${ports}"
+        done
+      register: openwrt_dsa_bridge_vlans_raw
+      changed_when: false
+
+    - name: Read firewall zone metadata
+      ansible.builtin.raw: |
+        set -eu
+        uci -q show firewall | sed -n "s/^firewall\.\([^.=]*\)=zone$/\1/p" | while IFS= read -r section; do
+          name="$(uci -q get "firewall.${section}.name" || true)"
+          masq="$(uci -q get "firewall.${section}.masq" || echo 0)"
+          printf '%s\t%s\t%s\n' "${section}" "${name}" "${masq}"
+        done
+      register: openwrt_firewall_zones_raw
+      changed_when: false
+
+    - name: Read link state as JSON when supported
+      ansible.builtin.raw: |
+        if ip -j link show >/dev/null 2>&1; then ip -j link show; else printf '[]\n'; fi
+      register: openwrt_links_raw
+      changed_when: false
+
+    - name: Read bridge state as JSON when supported
+      ansible.builtin.raw: |
+        printf '{"links":'
+        if command -v bridge >/dev/null 2>&1 && bridge -j link show >/dev/null 2>&1; then
+          bridge -j link show
+        else
+          printf '[]'
+        fi
+        printf ',"vlans":'
+        if command -v bridge >/dev/null 2>&1 && bridge -j vlan show >/dev/null 2>&1; then
+          bridge -j vlan show
+        else
+          printf '[]'
+        fi
+        printf '}\n'
+      register: openwrt_bridge_state_raw
+      changed_when: false
+
+    - name: Read safe logical interface status
+      ansible.builtin.raw: |
+        set -eu
+        uci -q show network | sed -n "s/^network\.\([^.=]*\)=interface$/\1/p" | while IFS= read -r interface; do
+          status="$(ubus call "network.interface.${interface}" status 2>/dev/null || printf '{}')"
+          up="$(printf '%s' "${status}" | jsonfilter -e '@.up' 2>/dev/null || printf false)"
+          device="$(printf '%s' "${status}" | jsonfilter -e '@.device' 2>/dev/null || true)"
+          l3_device="$(printf '%s' "${status}" | jsonfilter -e '@.l3_device' 2>/dev/null || true)"
+          proto="$(printf '%s' "${status}" | jsonfilter -e '@.proto' 2>/dev/null || true)"
+          printf '%s\t%s\t%s\t%s\t%s\n' "${interface}" "${up}" "${device}" "${l3_device}" "${proto}"
+        done
+      register: openwrt_interface_status_raw
+      changed_when: false
+
+    - name: Initialize structured discovery lists
+      ansible.builtin.set_fact:
+        openwrt_bridges: []
+        openwrt_bridge_vlans: []
+        openwrt_firewall_zones: []
+        openwrt_interface_status: []
+
+    - name: Structure DSA bridge metadata
+      ansible.builtin.set_fact:
+        openwrt_bridges: >-
+          {{ openwrt_bridges + [{
+            'section': item.split('\t')[0],
+            'name': item.split('\t')[1],
+            'ports': item.split('\t')[2].split()
+          }] }}
+      loop: "{{ openwrt_dsa_bridge_raw.stdout_lines | default([]) }}"
+      when: item.split('\t') | length >= 3
+
+    - name: Structure DSA bridge VLAN metadata
+      ansible.builtin.set_fact:
+        openwrt_bridge_vlans: >-
+          {{ openwrt_bridge_vlans + [{
+            'section': item.split('\t')[0],
+            'device': item.split('\t')[1],
+            'vlan': item.split('\t')[2],
+            'ports': item.split('\t')[3].split() if item.split('\t') | length > 3 else []
+          }] }}
+      loop: "{{ openwrt_dsa_bridge_vlans_raw.stdout_lines | default([]) }}"
+      when: item.split('\t') | length >= 3
+
+    - name: Structure firewall zone metadata
+      ansible.builtin.set_fact:
+        openwrt_firewall_zones: >-
+          {{ openwrt_firewall_zones + [{
+            'section': item.split('\t')[0],
+            'name': item.split('\t')[1],
+            'masq': item.split('\t')[2] == '1'
+          }] }}
+      loop: "{{ openwrt_firewall_zones_raw.stdout_lines | default([]) }}"
+      when: item.split('\t') | length >= 3
+
+    - name: Structure logical interface status
+      ansible.builtin.set_fact:
+        openwrt_interface_status: >-
+          {{ openwrt_interface_status + [{
+            'interface': item.split('\t')[0],
+            'up': item.split('\t')[1] == 'true',
+            'device': item.split('\t')[2],
+            'l3_device': item.split('\t')[3],
+            'proto': item.split('\t')[4]
+          }] }}
+      loop: "{{ openwrt_interface_status_raw.stdout_lines | default([]) }}"
+      when: item.split('\t') | length >= 5
+
+    - name: Build the nonsecret discovery document
+      ansible.builtin.set_fact:
+        openwrt_discovery:
+          schema_version: 1
+          inventory_hostname: "{{ inventory_hostname }}"
+          board_name: "{{ (openwrt_board_raw.stdout | from_json).board_name | default('') }}"
+          release:
+            target: "{{ (openwrt_board_raw.stdout | from_json).release.target | default('') }}"
+            version: "{{ (openwrt_board_raw.stdout | from_json).release.version | default('') }}"
+          capabilities:
+            dsa: "{{ 'dsa=1' in openwrt_capabilities_raw.stdout_lines }}"
+            fw4: "{{ 'fw4=1' in openwrt_capabilities_raw.stdout_lines }}"
+            dsa_evidence: >-
+              {{ openwrt_capabilities_raw.stdout |
+                 regex_search('(?m)^dsa_evidence=(.+)$', '\\1') | first }}
+          root_ssh_key_configured: "{{ 'root_ssh_key_configured=1' in openwrt_capabilities_raw.stdout_lines }}"
+          rollback_guard:
+            armed: "{{ 'rollback_guard_armed=1' in openwrt_capabilities_raw.stdout_lines }}"
+            change_id: >-
+              {{ openwrt_capabilities_raw.stdout |
+                 regex_search('(?m)^rollback_guard_change_id=(.*)$', '\\1') | first }}
+          configs:
+            network_sha256: "{{ openwrt_config_hashes_raw.stdout | regex_search('(?m)^network=([0-9a-f]{64})$', '\\1') | first }}"
+            firewall_sha256: "{{ openwrt_config_hashes_raw.stdout | regex_search('(?m)^firewall=([0-9a-f]{64})$', '\\1') | first }}"
+            dhcp_sha256: "{{ openwrt_config_hashes_raw.stdout | regex_search('(?m)^dhcp=([0-9a-f]{64})$', '\\1') | first }}"
+            pending_changes:
+              network: "{{ 'pending_network=1' in openwrt_capabilities_raw.stdout_lines }}"
+              firewall: "{{ 'pending_firewall=1' in openwrt_capabilities_raw.stdout_lines }}"
+              dhcp: "{{ 'pending_dhcp=1' in openwrt_capabilities_raw.stdout_lines }}"
+          dsa:
+            bridges: "{{ openwrt_bridges }}"
+            bridge: "{{ openwrt_bridges[0] if openwrt_bridges | length > 0 else {} }}"
+            bridge_vlans: "{{ openwrt_bridge_vlans }}"
+          firewall:
+            zones: "{{ openwrt_firewall_zones }}"
+          uci:
+            network: "{{ openwrt_network_uci_raw.stdout_lines | default([]) }}"
+            firewall: "{{ openwrt_firewall_uci_raw.stdout_lines | default([]) }}"
+            dhcp: "{{ openwrt_dhcp_uci_raw.stdout_lines | default([]) }}"
+          links: "{{ openwrt_links_raw.stdout | from_json }}"
+          bridge: "{{ openwrt_bridge_state_raw.stdout | from_json }}"
+          interface_status: "{{ openwrt_interface_status }}"
+
+    - name: Create the controller discovery directory
+      ansible.builtin.file:
+        path: "{{ openwrt_discovery_path | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+
+    - name: Save the nonsecret discovery document on the controller
+      ansible.builtin.copy:
+        content: "{{ openwrt_discovery | to_nice_json }}\n"
+        dest: "{{ openwrt_discovery_path }}"
+        mode: "0600"
+      delegate_to: localhost

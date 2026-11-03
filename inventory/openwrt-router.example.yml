@@ -1,0 +1,69 @@
+---
+# Copy this file to inventory/openwrt-router.local.yml. Discovery must be run
+# first; then replace every REPLACE value with the exact discovered value and
+# set enabled=true only after reviewing the router, switch ports and IP plan.
+all:
+  vars:
+    openwrt_schema_version: 1
+  children:
+    openwrt:
+      hosts:
+        router:
+          enabled: false
+          ansible_host: 192.0.2.1
+          ansible_user: root
+          ansible_port: 22
+          ansible_ssh_private_key_file: /home/operator/.ssh/id_ed25519
+          require_root_ssh_key: true
+          # The first DSA VLAN migration can interrupt every LAN port. Keep
+          # local/serial recovery access available until openwrt-apply finishes.
+          physical_console_available: false
+
+          expected:
+            board_name: REPLACE_OPENWRT_BOARD_NAME
+            release:
+              target: REPLACE_OPENWRT_RELEASE_TARGET
+              version: REPLACE_OPENWRT_RELEASE_VERSION
+            capabilities:
+              dsa: true
+              fw4: true
+
+          # section, name and ports must exactly match discovery.json. Provider
+          # tagged ports must be a subset of the ports carrying native management.
+          dsa_bridge:
+            # Keep the quotes when an anonymous UCI section starts with @.
+            section: "REPLACE_DSA_BRIDGE_SECTION"
+            name: br-lan
+            ports:
+              - REPLACE_DSA_LAN_PORT
+            management_ports:
+              - REPLACE_DSA_LAN_PORT
+            provider_tagged_ports:
+              - REPLACE_DSA_LAN_PORT
+
+          # These values intentionally duplicate inventory/openstack-plan.yml so a
+          # stale or accidentally selected network plan fails closed.
+          networks:
+            management:
+              vlan_id: 1
+              cidr: 192.0.2.0/24
+              gateway: 192.0.2.1
+            provider:
+              vlan_id: 10
+              cidr: 198.51.100.0/24
+              gateway: 198.51.100.1
+              floating_ip_pool:
+                start: 198.51.100.50
+                end: 198.51.100.99
+              # Nodes that already have br-ex cannot receive a temporary host
+              # address. They are checked read-only for exact br-ex membership;
+              # keep probe_addresses only for newly prepared nodes.
+              deployed_nodes: []
+              # Every newly prepared probe node needs a unique address outside
+              # the Floating IP pool.
+              probe_addresses:
+                cloud01: 198.51.100.2
+
+          timeouts:
+            rollback_seconds: 300
+            ssh_return_seconds: 120

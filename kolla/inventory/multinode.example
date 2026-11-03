@@ -1,0 +1,26 @@
+# Primary groups used by scripts/render-kolla-multinode.sh.
+[control]
+cloud01 ansible_host=192.0.2.2 ansible_user=operator
+cloud02 ansible_host=192.0.2.4 ansible_user=operator
+cloud03 ansible_host=192.0.2.5 ansible_user=operator
+
+[network]
+cloud01 ansible_host=192.0.2.2 ansible_user=operator
+cloud02 ansible_host=192.0.2.4 ansible_user=operator
+cloud03 ansible_host=192.0.2.5 ansible_user=operator
+
+[compute]
+cloud01 ansible_host=192.0.2.2 ansible_user=operator
+cloud02 ansible_host=192.0.2.4 ansible_user=operator
+cloud03 ansible_host=192.0.2.5 ansible_user=operator
+
+[monitoring]
+cloud01 ansible_host=192.0.2.2 ansible_user=operator
+
+[storage]
+cloud01 ansible_host=192.0.2.2 ansible_user=operator
+cloud02 ansible_host=192.0.2.4 ansible_user=operator
+cloud03 ansible_host=192.0.2.5 ansible_user=operator
+
+[deployment]
+localhost ansible_connection=local

@@ -1,0 +1,97 @@
+---
+- name: Verify the reviewed OpenWrt network plan while the rollback guard is armed
+  hosts: openwrt
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
+    openwrt_require_guard_armed: true
+  pre_tasks:
+    - name: Load the reviewed router plan on the controller
+      ansible.builtin.set_fact:
+        openwrt_plan: "{{ lookup('ansible.builtin.file', openwrt_plan_path) | from_json }}"
+      no_log: true
+
+    - name: Validate the verification plan
+      ansible.builtin.assert:
+        that:
+          - openwrt_plan.schema_version | int == 1
+          - openwrt_plan.change_id is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+          - openwrt_plan.verification.uci_equals | default({}) is mapping
+          - openwrt_plan.verification.interfaces_up | default([]) is sequence
+          - openwrt_plan.verification.router_ping_targets | default([]) is sequence
+        fail_msg: The OpenWrt verification plan is invalid.
+
+    - name: Validate desired UCI keys
+      ansible.builtin.assert:
+        that:
+          - item.key is match('^(network|firewall|dhcp)[A-Za-z0-9_@.\\[\\]-]+$')
+        fail_msg: The verification plan contains an invalid UCI key.
+      loop: "{{ openwrt_plan.verification.uci_equals | default({}) | dict2items }}"
+
+    - name: Validate logical interface names
+      ansible.builtin.assert:
+        that:
+          - item is match('^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$')
+        fail_msg: The verification plan contains an invalid interface name.
+      loop: "{{ openwrt_plan.verification.interfaces_up | default([]) }}"
+
+    - name: Validate router ping targets
+      ansible.builtin.assert:
+        that:
+          - item is match('^[0-9A-Fa-f:.]+$')
+        fail_msg: The verification plan contains an invalid ping target.
+      loop: "{{ openwrt_plan.verification.router_ping_targets | default([]) }}"
+
+  tasks:
+    - name: Require the expected guarded or confirmed transaction
+      ansible.builtin.raw: |
+        set -eu
+        {% if openwrt_require_guard_armed | bool %}
+        test -e /root/openwrt-rollback/current/CHANGE_ID
+        test "$(cat /root/openwrt-rollback/current/CHANGE_ID)" = {{ openwrt_plan.change_id | quote }}
+        test -e /root/openwrt-rollback/current/ARMED
+        {% else %}
+        transaction={{ ('/root/openwrt-rollback/' ~ openwrt_plan.change_id) | quote }}
+        test -e "${transaction}/CHANGE_ID"
+        test "$(cat "${transaction}/CHANGE_ID")" = {{ openwrt_plan.change_id | quote }}
+        test -e "${transaction}/CONFIRMED" || test -e "${transaction}/ARMED"
+        {% endif %}
+      changed_when: false
+
+    - name: Validate the active fw4 ruleset
+      ansible.builtin.raw: fw4 check
+      changed_when: false
+
+    - name: Read desired UCI values
+      ansible.builtin.raw: "uci -q get {{ item.key | quote }}"
+      loop: "{{ openwrt_plan.verification.uci_equals | default({}) | dict2items }}"
+      register: openwrt_verified_uci_values
+      changed_when: false
+
+    - name: Require desired UCI values
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == item.item.value | string
+        fail_msg: "The router value does not match {{ item.item.key }}."
+      loop: "{{ openwrt_verified_uci_values.results | default([]) }}"
+
+    - name: Read required logical interface status
+      ansible.builtin.raw: |
+        ubus call {{ ('network.interface.' ~ item) | quote }} status | jsonfilter -e '@.up'
+      loop: "{{ openwrt_plan.verification.interfaces_up | default([]) }}"
+      register: openwrt_verified_interfaces
+      changed_when: false
+
+    - name: Require logical interfaces to be up
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == 'true'
+        fail_msg: "The logical interface {{ item.item }} is not up."
+      loop: "{{ openwrt_verified_interfaces.results | default([]) }}"
+
+    - name: Probe router-side reachability
+      ansible.builtin.raw: "ping -c 3 -W 2 {{ item | quote }}"
+      loop: "{{ openwrt_plan.verification.router_ping_targets | default([]) }}"
+      changed_when: false

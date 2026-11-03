@@ -1,0 +1,111 @@
+---
+schema_version: 1
+
+# Public example networks use RFC 5737 documentation ranges. Copy this file
+# to openstack-cluster.local.yml and replace every environment-specific value.
+
+cluster:
+  api_vip: 192.0.2.10
+  timezone: Asia/Seoul
+  ssh_private_key: /home/operator/.ssh/id_ed25519
+  storage_backend: lvm
+  # Managed services stay disabled on the initial one-node cloud. After cloud02
+  # and cloud03 are enabled and storage_backend is changed to ceph, set the
+  # required service flag to true and rerender the topology.
+  platform:
+    magnum_capi:
+      enabled: false
+      hosted_control_plane: false
+    container_service:
+      enabled: false
+      # Zun is not deployable by Kolla-Ansible 2026.2. The supported path is a
+      # container API backed by a dedicated Kubernetes runtime cluster.
+      provider: kubernetes
+  ceph:
+    enabled: false
+    bootstrap_host: cloud01
+    public_network: 192.0.2.0/24
+    cluster_network: ""
+    osd_memory_target_ratio: 0.2
+    # images/volumes/vms are pinned to one CRUSH device class. Other classes
+    # may exist, but need separate pools and Cinder volume types to be used.
+    openstack_pool_device_class: nvme
+
+nodes:
+  cloud01:
+    enabled: true
+    connection: local
+    ansible_host: 192.0.2.2
+    ansible_user: operator
+    management_interface: mgmt0
+    # Locally administered example MAC. Replace it in the ignored local copy.
+    management_mac: 02:00:00:00:00:01
+    management_address: 192.0.2.2/24
+    management_gateway: 192.0.2.1
+    management_dns:
+      - 192.0.2.1
+    neutron_external_interface: mgmt0.10
+    neutron_external_vlan_id: 10
+    os_disk_serial: EXAMPLE-OS-SSD-0001
+    require_docker_mount: true
+    roles:
+      - control
+      - network
+      - compute
+      - monitoring
+      - storage
+    ceph_address: 192.0.2.2
+    # Add only after the same-class OSD exists on at least three hosts:
+    # ceph_osd_devices:
+    #   - by_id: /dev/disk/by-id/nvme-REPLACE
+    #     serial: REPLACE
+    #     min_size_bytes: 1800000000000
+    #     device_class: nvme
+    ceph_osd_devices: []
+
+  # Enable cloud02 and cloud03 together after replacing every REPLACE value.
+  # With the LVM backend, cloud01 remains the only storage host. This expands
+  # the control and compute planes but does not replicate Cinder or Glance data.
+  cloud02:
+    enabled: false
+    connection: ssh
+    ansible_host: 192.0.2.4
+    ansible_user: operator
+    management_interface: mgmt0
+    management_mac: REPLACE_CLOUD02_MAC
+    management_address: 192.0.2.4/24
+    management_gateway: 192.0.2.1
+    management_dns:
+      - 192.0.2.1
+    neutron_external_interface: mgmt0.10
+    neutron_external_vlan_id: 10
+    os_disk_serial: REPLACE_CLOUD02_OS_DISK_SERIAL
+    require_docker_mount: true
+    roles:
+      - control
+      - network
+      - compute
+    ceph_address: 192.0.2.4
+    ceph_osd_devices: []
+
+  cloud03:
+    enabled: false
+    connection: ssh
+    ansible_host: 192.0.2.5
+    ansible_user: operator
+    management_interface: mgmt0
+    management_mac: REPLACE_CLOUD03_MAC
+    management_address: 192.0.2.5/24
+    management_gateway: 192.0.2.1
+    management_dns:
+      - 192.0.2.1
+    neutron_external_interface: mgmt0.10
+    neutron_external_vlan_id: 10
+    os_disk_serial: REPLACE_CLOUD03_OS_DISK_SERIAL
+    require_docker_mount: true
+    roles:
+      - control
+      - network
+      - compute
+    ceph_address: 192.0.2.5
+    ceph_osd_devices: []

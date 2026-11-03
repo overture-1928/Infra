@@ -1,0 +1,103 @@
+---
+- name: Confirm a verified OpenWrt change and disarm its rollback guard
+  hosts: openwrt
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
+  pre_tasks:
+    - name: Load the reviewed router plan on the controller
+      ansible.builtin.set_fact:
+        openwrt_plan: "{{ lookup('ansible.builtin.file', openwrt_plan_path) | from_json }}"
+      no_log: true
+
+    - name: Validate the confirmation plan
+      ansible.builtin.assert:
+        that:
+          - openwrt_plan.schema_version | int == 1
+          - openwrt_plan.change_id is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+          - openwrt_plan.confirmations.confirm | default('') | length >= 16
+        fail_msg: The OpenWrt confirmation plan is invalid.
+
+    - name: Require the exact confirmation from the controller environment
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'OPENWRT_CONFIRM') == openwrt_plan.confirmations.confirm
+        fail_msg: OPENWRT_CONFIRM does not match the reviewed plan.
+      no_log: true
+
+    - name: Validate desired UCI keys
+      ansible.builtin.assert:
+        that:
+          - item.key is match('^(network|firewall|dhcp)[A-Za-z0-9_@.\\[\\]-]+$')
+      loop: "{{ openwrt_plan.verification.uci_equals | default({}) | dict2items }}"
+
+  tasks:
+    - name: Require the expected armed transaction
+      ansible.builtin.raw: |
+        set -eu
+        test -e /root/openwrt-rollback/current/ARMED
+        test "$(cat /root/openwrt-rollback/current/CHANGE_ID)" = {{ openwrt_plan.change_id | quote }}
+      changed_when: false
+
+    - name: Recheck the firewall before confirmation
+      ansible.builtin.raw: fw4 check
+      changed_when: false
+
+    - name: Read desired UCI values before confirmation
+      ansible.builtin.raw: "uci -q get {{ item.key | quote }}"
+      loop: "{{ openwrt_plan.verification.uci_equals | default({}) | dict2items }}"
+      register: openwrt_confirm_uci_values
+      changed_when: false
+
+    - name: Require desired UCI values before confirmation
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == item.item.value | string
+        fail_msg: "The router value does not match {{ item.item.key }}; the guard remains armed."
+      loop: "{{ openwrt_confirm_uci_values.results | default([]) }}"
+
+    - name: Disarm the persistent rollback guard
+      ansible.builtin.raw: |
+        set -eu
+        transaction={{ ('/root/openwrt-rollback/' ~ openwrt_plan.change_id) | quote }}
+        change_id={{ openwrt_plan.change_id | quote }}
+        claim=/root/openwrt-rollback/APPLY_LOCK
+        test -e "${transaction}/ARMED"
+        attempt_id="$(cat "${transaction}/ATTEMPT_ID")"
+        test -n "${attempt_id}"
+        test "$(cat "${transaction}/CHANGE_ID")" = "${change_id}"
+        test "$(cat "${claim}/CHANGE_ID")" = "${change_id}"
+        test "$(cat "${claim}/ATTEMPT_ID")" = "${attempt_id}"
+        test "$(readlink /root/openwrt-rollback/current)" = "${transaction}"
+        lock="${transaction}/FINALIZE_LOCK"
+        mkdir "${lock}" 2>/dev/null || {
+          echo 'Rollback is already finalizing this transaction.' >&2
+          exit 1
+        }
+        cleanup_lock() {
+          rmdir "${lock}" >/dev/null 2>&1 || true
+        }
+        abort_confirm() {
+          cleanup_lock
+          exit 1
+        }
+        trap cleanup_lock EXIT
+        trap abort_confirm HUP INT TERM
+        test -e "${transaction}/ARMED"
+        mv "${transaction}/ARMED" "${transaction}/CONFIRMED"
+        /etc/init.d/openwrt-rollback-guard stop >/dev/null 2>&1 || true
+        /etc/init.d/openwrt-rollback-guard disable >/dev/null 2>&1 || true
+        rm -f /etc/init.d/openwrt-rollback-guard
+        rm -f /root/openwrt-rollback/current
+        rm -f "${claim}/CHANGE_ID" "${claim}/ATTEMPT_ID"
+        rmdir "${claim}"
+      changed_when: true
+
+    - name: Require the transaction to be confirmed
+      ansible.builtin.raw: |
+        test -e {{ ('/root/openwrt-rollback/' ~ openwrt_plan.change_id ~ '/CONFIRMED') | quote }}
+        test ! -e /root/openwrt-rollback/current/ARMED
+        test ! -e /root/openwrt-rollback/APPLY_LOCK
+      changed_when: false

@@ -1,0 +1,69 @@
+---
+- name: Manually trigger the armed OpenWrt rollback transaction
+  hosts: openwrt
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    openwrt_plan_path: "{{ playbook_dir }}/../../.cache/openwrt/plan.json"
+  pre_tasks:
+    - name: Load the reviewed router plan on the controller
+      ansible.builtin.set_fact:
+        openwrt_plan: "{{ lookup('ansible.builtin.file', openwrt_plan_path) | from_json }}"
+      no_log: true
+
+    - name: Validate the rollback plan
+      ansible.builtin.assert:
+        that:
+          - openwrt_plan.schema_version | int == 1
+          - openwrt_plan.change_id is match('^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
+          - openwrt_plan.confirmations.rollback | default('') | length >= 16
+        fail_msg: The OpenWrt rollback plan is invalid.
+
+    - name: Require the exact rollback confirmation from the controller environment
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'OPENWRT_ROLLBACK_CONFIRM') == openwrt_plan.confirmations.rollback
+        fail_msg: OPENWRT_ROLLBACK_CONFIRM does not match the reviewed plan.
+      no_log: true
+
+  tasks:
+    - name: Require the expected armed transaction
+      ansible.builtin.raw: |
+        set -eu
+        test -e /root/openwrt-rollback/current/ARMED
+        test "$(cat /root/openwrt-rollback/current/CHANGE_ID)" = {{ openwrt_plan.change_id | quote }}
+        test -x /root/openwrt-rollback/current/rollback.sh
+      changed_when: false
+
+    - name: Trigger rollback outside the SSH session
+      ansible.builtin.raw: |
+        (
+          sleep 1
+          /bin/sh /root/openwrt-rollback/current/rollback.sh
+        ) >/tmp/openwrt-manual-rollback.log 2>&1 </dev/null &
+      changed_when: true
+
+    - name: Wait for the router SSH port to return
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: "{{ ansible_port | default(22) | int }}"
+        delay: 3
+        timeout: "{{ openwrt_plan.timeouts.ssh_return_seconds | default(120) | int }}"
+        state: started
+      delegate_to: localhost
+
+    - name: Require restored configuration hashes
+      ansible.builtin.raw: |
+        set -eu
+        transaction={{ ('/root/openwrt-rollback/' ~ openwrt_plan.change_id) | quote }}
+        test -e "${transaction}/ROLLED_BACK"
+        test ! -e /root/openwrt-rollback/APPLY_LOCK
+        test "$(sha256sum /etc/config/network | awk '{print $1}')" = {{ (openwrt_plan.preconditions.configs.network_sha256 | default(openwrt_plan.preconditions.network_sha256 | default(''))) | quote }}
+        test "$(sha256sum /etc/config/firewall | awk '{print $1}')" = {{ (openwrt_plan.preconditions.configs.firewall_sha256 | default(openwrt_plan.preconditions.firewall_sha256 | default(''))) | quote }}
+        test "$(sha256sum /etc/config/dhcp | awk '{print $1}')" = {{ (openwrt_plan.preconditions.configs.dhcp_sha256 | default(openwrt_plan.preconditions.dhcp_sha256 | default(''))) | quote }}
+      register: openwrt_rollback_status
+      changed_when: false
+      retries: 10
+      delay: 3
+      until: openwrt_rollback_status.rc == 0
